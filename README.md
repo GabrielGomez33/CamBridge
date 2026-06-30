@@ -56,7 +56,10 @@ Phased build — see SPEC.md §10.
 - [x] **Phase 1** — auth & accounts (server): MySQL migrations, bcrypt + JWT/sessions,
       register/login/logout/refresh/verify, email verify, forgot/reset-password,
       Resend/Brevo email (dry-run). _Frontend auth UI lands with Phase 2 client._
-- [ ] **Phase 2** — camera app + OBS viewer + TURN
+- [~] **Phase 2** — streaming core: always-canvas camera app (full controls,
+      reliability), standalone OBS viewer + standby, WebRTC engine (perfect
+      offer/answer, ICE restart, replaceTrack, bitrate cap), telemetry HUD.
+      _Testable now via standalone pages. React shell + reskinned auth UI next._
 - [ ] **Phase 3** — `CAMBRIDGE // CONTROL` dashboard
 - [ ] **Phase 4** — hardening + deploy (Let's Encrypt, nginx, coturn)
 
