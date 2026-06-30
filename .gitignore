@@ -5,21 +5,29 @@ node_modules/
 # Env / secrets — never commit real config
 .env
 .env.local
+.env.*.local
 */.env
 */.env.local
+*.pem
+*.key
 
 # Logs
 *.log
 npm-debug.log*
 logs/
+.pm2/
 
 # OS / editor cruft
 .DS_Store
 Thumbs.db
 *.swp
 .idea/
-.vscode/
+.vscode/*
+!.vscode/extensions.json
 
 # Build output
 dist/
 build/
+client/dist/
+coverage/
+.cache/

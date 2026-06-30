@@ -2,22 +2,30 @@
   "name": "cambridge-server",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
-  "description": "CamBridge signaling server — WebRTC P2P camera-to-OBS bridge",
-  "main": "src/index.js",
+  "description": "CamBridge signaling + API server — WebRTC P2P camera-to-OBS bridge",
+  "main": "dist/index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   },
   "dependencies": {
-    "dotenv": "^16.4.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "helmet": "^8.1.0",
     "pino": "^9.5.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "pino-pretty": "^11.3.0"
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "pino-pretty": "^13.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
   }
 }

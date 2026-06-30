@@ -1,0 +1,214 @@
+name: CamBridge CI/CD
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [master, develop]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Force deploy to production'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  # ── Quality gate: runs on every push & PR ──────────────────────────────────
+  quality:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            server/package-lock.json
+            client/package-lock.json
+
+      # ── Server ──
+      - name: Server install
+        working-directory: server
+        run: npm ci
+
+      - name: Server type-check
+        working-directory: server
+        run: npx tsc --noEmit
+
+      - name: Server build
+        working-directory: server
+        run: npm run build
+
+      - name: Verify server build artifacts
+        working-directory: server
+        run: |
+          if [ ! -f "dist/index.js" ]; then
+            echo "::error::Server build failed — server/dist/index.js not found"
+            exit 1
+          fi
+          echo "Server build artifacts verified:"; ls -la dist/
+
+      - name: Server security audit
+        working-directory: server
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+      # ── Client (skipped until client/ exists — Phase 2) ──
+      - name: Detect client
+        id: client
+        run: |
+          if [ -f "client/package.json" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; \
+          else echo "present=false" >> "$GITHUB_OUTPUT"; echo "No client/ yet — skipping client steps."; fi
+
+      - name: Client install
+        if: steps.client.outputs.present == 'true'
+        working-directory: client
+        run: npm ci
+
+      - name: Client lint
+        if: steps.client.outputs.present == 'true'
+        working-directory: client
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Client build
+        if: steps.client.outputs.present == 'true'
+        working-directory: client
+        run: npm run build
+
+      # ── Repo-wide secret scan ──
+      - name: Secret scan
+        run: |
+          echo "Scanning for potential hardcoded secrets..."
+          PATTERNS='(password|secret|api_key|private_key|token)\s*[:=]\s*["\x27][^"\x27]{8,}'
+          if grep -rniE "$PATTERNS" --include="*.ts" --include="*.tsx" --include="*.js" --include="*.json" \
+            --exclude-dir=node_modules --exclude-dir=dist \
+            --exclude="package-lock.json" --exclude="*.d.ts" . ; then
+            echo "::warning::Potential hardcoded secrets detected. Review the matches above."
+          else
+            echo "No hardcoded secrets detected."
+          fi
+
+  # ── Deploy: only on push to master (or manual force) ───────────────────────
+  deploy:
+    name: Deploy to Production
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy == 'true')
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Create pre-deploy snapshot
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'SNAP'
+          cd ${{ secrets.CAMBRIDGE_DEPLOY_PATH }}
+          git rev-parse HEAD > /tmp/.cambridge-rollback-commit
+          echo "Pre-deploy commit: $(cat /tmp/.cambridge-rollback-commit)"
+          SNAP
+
+      - name: Deploy CamBridge
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'DEPLOY'
+          set -e
+          echo "=== CamBridge deploy $(date '+%Y-%m-%d %H:%M:%S') ==="
+          cd ${{ secrets.CAMBRIDGE_DEPLOY_PATH }}
+
+          echo "[1/5] Pulling latest code..."
+          git fetch origin master
+          git reset --hard origin/master
+
+          echo "[2/5] Building server..."
+          cd server
+          npm ci
+          npm run build
+          if [ ! -f "dist/index.js" ]; then echo "ERROR: server build failed"; exit 1; fi
+          npm prune --omit=dev
+
+          echo "[3/5] Restarting cambridge-server (PM2)..."
+          cd ..
+          sudo pm2 startOrRestart ecosystem.config.js
+
+          if [ -f "client/package.json" ]; then
+            echo "[4/5] Building & publishing client..."
+            cd client && npm ci && npm run deploy && cd ..
+          else
+            echo "[4/5] No client/ yet — skipping."
+          fi
+
+          echo "[5/5] Stabilizing..."
+          sleep 8
+          sudo pm2 list
+          DEPLOY
+
+      - name: Health check
+        id: health_check
+        run: |
+          for i in $(seq 1 10); do
+            echo "Attempt $i/10..."
+            HTTP_CODE=$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+              ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+              "curl -s -o /dev/null -w '%{http_code}' http://localhost:8447/cambridge/api/health" \
+              2>/dev/null || echo "000")
+            echo "Health: HTTP $HTTP_CODE"
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "health_status=healthy" >> "$GITHUB_OUTPUT"; echo "Health check PASSED"; exit 0
+            fi
+            [ "$i" -lt 10 ] && sleep 5
+          done
+          echo "health_status=unhealthy" >> "$GITHUB_OUTPUT"
+          echo "::error::Health check FAILED after 10 attempts"; exit 1
+
+      - name: Rollback on failure
+        if: failure() && steps.health_check.outputs.health_status == 'unhealthy'
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ROLLBACK'
+          set -e
+          cd ${{ secrets.CAMBRIDGE_DEPLOY_PATH }}
+          RB=$(cat /tmp/.cambridge-rollback-commit 2>/dev/null)
+          if [ -z "$RB" ]; then echo "ERROR: no rollback commit"; exit 1; fi
+          echo "Rolling back to $RB"
+          git checkout "$RB"
+          cd server && npm ci && npm run build && npm prune --omit=dev && cd ..
+          sudo pm2 startOrRestart ecosystem.config.js
+          sleep 8 && sudo pm2 list
+          ROLLBACK
+
+      - name: Tag release
+        if: success()
+        run: |
+          VERSION="v$(date +'%Y.%m.%d')-${GITHUB_SHA::7}"
+          git tag "$VERSION"
+          git push origin "$VERSION"
+          echo "Tagged release: $VERSION"
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
