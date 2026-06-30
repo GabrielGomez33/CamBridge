@@ -43,48 +43,55 @@ The pipeline reuses your existing deploy credentials, plus one new path:
 
 The deploy user needs passwordless `sudo pm2` (same as admin/mirror-server).
 
-## 3. Apache (reverse proxy + WebSocket upgrade)
+## 3. Apache — same pattern as admin/Mirror
 
-The whole app (static client + REST + WS) lives under one base path and is served
-by the Node process on :8447. Apache just reverse-proxies `/cambridge` to it — no
-separate static `Alias`, no `client/dist` copy needed (Node serves `client/`).
+Apache terminates TLS and **serves the static client itself** at `/cambridge/`
+(with `client/.htaccess` for caching + SPA fallback), and **proxies only the API
+and WebSocket** to the Node app on plain HTTP `127.0.0.1:8447`. Node never
+terminates TLS and is never exposed directly — identical to the `admin` service.
 
 Enable the modules once:
 
 ```bash
-sudo a2enmod proxy proxy_http proxy_wstunnel headers
-sudo systemctl reload apache2
+sudo a2enmod proxy proxy_http proxy_wstunnel rewrite headers
 ```
 
-Add to your existing HTTPS `<VirtualHost *:443>` for the domain (Let's Encrypt):
+Add inside your existing HTTPS `<VirtualHost *:443>` for the domain:
 
 ```apache
-# CamBridge — proxy everything under /cambridge to the Node app on :8447.
-ProxyPreserveHost On
-RequestHeader set X-Forwarded-Proto "https"
+# --- CamBridge WebSocket (must be among the RewriteRule [P] block) ---
+RewriteEngine On
+RewriteCond %{HTTP:Upgrade} =websocket [NC]
+RewriteCond %{HTTP:Connection} =upgrade [NC]
+RewriteRule ^/cambridge/ws$ ws://127.0.0.1:8447/cambridge/ws [P,L]
 
-# WebSocket signaling — MUST come before the general /cambridge rule.
-ProxyPass        /cambridge/ws  ws://127.0.0.1:8447/cambridge/ws
-ProxyPassReverse /cambridge/ws  ws://127.0.0.1:8447/cambridge/ws
+# --- CamBridge API (BEFORE the static Alias, like /admin/api) ---
+ProxyPass        /cambridge/api  http://127.0.0.1:8447/cambridge/api
+ProxyPassReverse /cambridge/api  http://127.0.0.1:8447/cambridge/api
 
-# Static client + REST API.
-ProxyPass        /cambridge     http://127.0.0.1:8447/cambridge
-ProxyPassReverse /cambridge     http://127.0.0.1:8447/cambridge
+# --- CamBridge static client ---
+Alias "/cambridge" "/var/www/CamBridge/client"
+<Directory "/var/www/CamBridge/client">
+    Options -Indexes +FollowSymLinks
+    AllowOverride All
+    Require all granted
+</Directory>
 ```
 
-Reload: `sudo systemctl reload apache2`. Then visit
-`https://<domain>/cambridge/`.
+```bash
+sudo apachectl configtest && sudo systemctl reload apache2
+```
+
+Then visit `https://<domain>/cambridge/`.
 
 > `getUserMedia` (camera/mic) requires HTTPS — your existing Let's Encrypt cert
 > covers it. For local phone testing without a public cert, use
 > [`mkcert`](https://github.com/FiloSottile/mkcert).
 
-### Optional: let Apache serve the static client directly
-
-For a busier deployment you can offload static files from Node: build/keep the
-client in `client/` (or `client/dist` once the React shell lands), `Alias
-/cambridge` to it, and only proxy `/cambridge/api` + `/cambridge/ws` to Node.
-The single-proxy form above is simpler and fine for normal load.
+> When the React shell lands it builds with Vite `base: '/cambridge/'` into
+> `client/dist`; point the `Alias` at `client/dist` (or copy it to the web root
+> in the deploy step, like admin's `npm run deploy`). The `.htaccess` already
+> handles hashed-asset caching and the history fallback.
 
 ## 4. TURN (coturn) — Phase 2
 

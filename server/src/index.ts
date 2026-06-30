@@ -47,6 +47,7 @@ app.use(config.basePath, express.static(CLIENT_DIR, { extensions: ['html'] }));
 app.get('/', (_req, res) => res.redirect(`${config.basePath}/`));
 
 // ── HTTP + WebSocket ─────────────────────────────────────────────────────────
+// Plain HTTP on loopback — Apache terminates TLS and reverse-proxies to us.
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true, maxPayload: config.maxMessageBytes });
 const signaling = attachSignaling(wss, store, logger);
