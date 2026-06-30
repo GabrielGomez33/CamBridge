@@ -53,7 +53,9 @@ curl -X POST localhost:8447/cambridge/api/sessions -H 'content-type: application
 Phased build — see SPEC.md §10.
 
 - [x] **Phase 0** — foundation: TS/Express skeleton, WebRTC signaling, CI/CD, PM2, design tokens
-- [ ] **Phase 1** — auth & accounts (ported from Mirror)
+- [x] **Phase 1** — auth & accounts (server): MySQL migrations, bcrypt + JWT/sessions,
+      register/login/logout/refresh/verify, email verify, forgot/reset-password,
+      Resend/Brevo email (dry-run). _Frontend auth UI lands with Phase 2 client._
 - [ ] **Phase 2** — camera app + OBS viewer + TURN
 - [ ] **Phase 3** — `CAMBRIDGE // CONTROL` dashboard
 - [ ] **Phase 4** — hardening + deploy (Let's Encrypt, nginx, coturn)

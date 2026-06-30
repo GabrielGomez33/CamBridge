@@ -7,9 +7,12 @@ import { WebSocketServer } from 'ws';
 
 import { config, validateConfig } from './config';
 import { logger } from './logger';
+import { dbHealthy } from './db';
+import { runMigrations } from './db/migrate';
 import { SessionStore } from './webrtc/sessions';
 import { attachSignaling } from './webrtc/signaling';
 import { sessionRoutes } from './routes/sessions';
+import { authRoutes } from './routes/auth';
 
 validateConfig(logger);
 
@@ -23,10 +26,16 @@ app.use(helmet({ contentSecurityPolicy: false })); // CSP tuned per-page in Phas
 app.use(express.json({ limit: '64kb' }));
 
 // Health probe (matches mirror/admin convention for the CI/CD health check).
-app.get(`${api}/health`, (_req, res) => {
-  res.json({ ok: true, sessions: store.size, turn: config.turn.enabled });
+// Race the DB ping with a short timeout so a down database never hangs the probe.
+app.get(`${api}/health`, async (_req, res) => {
+  const db = await Promise.race([
+    dbHealthy(),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1500)),
+  ]);
+  res.json({ ok: true, sessions: store.size, turn: config.turn.enabled, db });
 });
 
+app.use(`${api}/auth`, authRoutes());
 app.use(api, sessionRoutes(store, logger));
 
 // Static client assets (dev convenience; nginx serves these in production).
@@ -68,12 +77,29 @@ const sweepTimer = setInterval(() => {
 sweepTimer.unref?.();
 
 // ── lifecycle ─────────────────────────────────────────────────────────────────
-server.listen(config.port, config.host, () => {
-  logger.info(
-    { host: config.host, port: config.port, env: config.env, base: config.basePath },
-    'CamBridge server listening'
-  );
-});
+function bootstrap(): void {
+  if (!config.auth.jwtSecret || !config.auth.jwtRefreshSecret) {
+    logger.warn({}, 'JWT_SECRET / JWT_REFRESH_SECRET not set — auth endpoints will reject tokens.');
+  }
+
+  // Listen immediately so signaling/health are available without waiting on the
+  // DB. Migrations run in the background — failure is non-fatal: only the auth
+  // endpoints depend on the database.
+  server.listen(config.port, config.host, () => {
+    logger.info(
+      { host: config.host, port: config.port, env: config.env, base: config.basePath },
+      'CamBridge server listening'
+    );
+  });
+
+  runMigrations()
+    .then(() => logger.info({}, 'migrations up to date'))
+    .catch((err) =>
+      logger.error({ err }, 'migrations failed — auth endpoints unavailable until DB is reachable')
+    );
+}
+
+bootstrap();
 
 function shutdown(signal: string): void {
   logger.info({ signal }, 'shutting down');

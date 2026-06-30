@@ -65,6 +65,37 @@ export const config = {
     secret: process.env.TURN_SECRET || '',
     ttlSec: int('TURN_TTL_SEC', 3600),
   },
+
+  // Database (MySQL) — mirrors mirror-server's pool config.
+  db: {
+    host: process.env.DB_HOST || '127.0.0.1',
+    user: process.env.DB_USER || 'cambridge',
+    password: process.env.DB_PASSWORD || '',
+    name: process.env.DB_NAME || 'cambridge',
+    poolSize: int('DB_POOL_SIZE', 20),
+  },
+
+  // Auth / JWT
+  auth: {
+    jwtSecret: process.env.JWT_SECRET || '',
+    jwtRefreshSecret: process.env.JWT_REFRESH_SECRET || '',
+    accessTtlSec: int('JWT_ACCESS_TTL_SEC', 15 * 60), // 15m
+    refreshTtlSec: int('JWT_REFRESH_TTL_SEC', 7 * 24 * 60 * 60), // 7d
+    sessionTtlSec: int('AUTH_SESSION_TTL_SEC', 24 * 60 * 60), // 24h
+    requireEmailVerified: bool('LOGIN_REQUIRE_EMAIL_VERIFIED', false),
+  },
+
+  // Email (Resend or Brevo)
+  email: {
+    provider: (process.env.EMAIL_PROVIDER || 'resend').toLowerCase(),
+    resendApiKey: process.env.RESEND_API_KEY || '',
+    brevoApiKey: process.env.BREVO_API_KEY || '',
+    from: process.env.EMAIL_FROM || 'CamBridge <no-reply@cambridge.local>',
+    dryRun: bool('EMAIL_DRY_RUN', true),
+  },
+
+  // Public app URL used to build verification / reset links in emails.
+  appUrl: (process.env.APP_URL || process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, ''),
 };
 
 export type AppConfig = typeof config;
