@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Env / secrets — never commit real config
+.env
+.env.local
+*/.env
+*/.env.local
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Build output
+dist/
+build/

@@ -1,0 +1,23 @@
+{
+  "name": "cambridge-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CamBridge signaling server — WebRTC P2P camera-to-OBS bridge",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "pino": "^9.5.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "pino-pretty": "^11.3.0"
+  }
+}
