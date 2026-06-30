@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>CamBridge — Broadcast</title>
+    <link rel="stylesheet" href="/css/tokens.css" />
+    <style>
+      body {
+        min-height: 100dvh;
+        padding: 12px;
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+      .state {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .studio {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      @media (min-width: 900px) {
+        .studio {
+          grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);
+        }
+      }
+      .stage {
+        position: relative;
+        background: #000;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow: hidden;
+        aspect-ratio: 16 / 9;
+      }
+      #preview {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        display: block;
+        background: #000;
+      }
+      #pausedOverlay {
+        position: absolute;
+        inset: 0;
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        background: rgba(10, 10, 10, 0.92);
+      }
+      #pausedOverlay.show {
+        display: flex;
+      }
+      .hud {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        font-size: 11px;
+        color: var(--text);
+        background: rgba(10, 10, 10, 0.55);
+        padding: 6px 8px;
+        border-radius: var(--radius-sm);
+        pointer-events: none;
+      }
+      .hud b {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .controls {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .group {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .row > .label {
+        min-width: 78px;
+      }
+      .seg {
+        display: inline-flex;
+        border: 1px solid var(--border-bright);
+        border-radius: var(--radius-sm);
+        overflow: hidden;
+      }
+      .seg button {
+        background: var(--panel-2);
+        color: var(--muted-2);
+        border: none;
+        padding: 6px 10px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .seg button.active {
+        background: color-mix(in srgb, var(--accent) 18%, transparent);
+        color: var(--accent);
+      }
+      select.input {
+        font-size: 13px;
+      }
+      .linkbox {
+        display: flex;
+        gap: 6px;
+      }
+      .linkbox input {
+        font-size: 12px;
+      }
+      /* Create view */
+      #create {
+        max-width: 460px;
+        margin: 8vh auto 0;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .hidden {
+        display: none !important;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 4px;
+      }
+      .hint {
+        font-size: 11px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span class="wordmark">CAMBRIDGE <span class="sep">//</span> <span class="accent">BROADCAST</span></span>
+      <span class="state"><span class="dot warn" id="dot"></span><span id="stateText">Idle</span></span>
+    </header>
+
+    <!-- Create-link view -->
+    <section id="create" class="panel">
+      <h1>Create a stream link</h1>
+      <div class="group">
+        <label class="label" for="title">Stream name (optional)</label>
+        <input class="input" id="title" maxlength="60" placeholder="e.g. Field cam" />
+      </div>
+      <button class="btn primary" id="createBtn">Create link</button>
+      <p class="hint">
+        You'll get a passcode-protected link to drop into OBS as a Browser Source. Then tap
+        <b>Go Live</b> to start streaming from this device's camera.
+      </p>
+    </section>
+
+    <!-- Studio view -->
+    <section id="studio" class="studio hidden">
+      <div class="stage">
+        <canvas id="preview"></canvas>
+        <div class="hud" id="hud"></div>
+        <div id="pausedOverlay">
+          <div class="dot warn"></div>
+          <div class="label">Paused — tap to resume</div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <div class="panel group">
+          <button class="btn primary" id="goLive">Go Live</button>
+          <div class="row">
+            <span class="label">OBS link</span>
+          </div>
+          <div class="linkbox">
+            <input class="input" id="obsLink" readonly />
+            <button class="btn" id="copyLink">Copy</button>
+          </div>
+          <div class="hint">Passcode: <b id="passcodeText">—</b> · add the link as a Browser Source.</div>
+        </div>
+
+        <div class="panel group">
+          <div class="row"><span class="label">Camera</span></div>
+          <div class="row">
+            <select class="input" id="cameraSelect"></select>
+            <button class="btn" id="flipBtn" title="Mirror">Mirror</button>
+          </div>
+          <div class="row">
+            <span class="label">Aspect</span>
+            <span class="seg" id="aspectSeg">
+              <button data-a="16:9" class="active">16:9</button>
+              <button data-a="9:16">9:16</button>
+              <button data-a="1:1">1:1</button>
+              <button data-a="4:3">4:3</button>
+            </span>
+          </div>
+        </div>
+
+        <div class="panel group">
+          <div class="row"><span class="label">Brightness</span><input type="range" class="slider" id="brightness" min="0" max="200" value="100" /></div>
+          <div class="row"><span class="label">Contrast</span><input type="range" class="slider" id="contrast" min="0" max="200" value="100" /></div>
+          <div class="row"><span class="label">Saturation</span><input type="range" class="slider" id="saturation" min="0" max="200" value="100" /></div>
+          <div class="row"><span class="label">Zoom</span><input type="range" class="slider" id="zoom" min="100" max="400" value="100" /></div>
+          <div class="row" id="torchRow" style="display: none">
+            <span class="label">Torch</span><button class="btn" id="torchBtn">Off</button>
+          </div>
+        </div>
+
+        <div class="panel group">
+          <div class="row">
+            <span class="label">Quality</span>
+            <select class="input" id="resSelect" style="width: auto">
+              <option value="480">480p</option>
+              <option value="720" selected>720p</option>
+              <option value="1080">1080p</option>
+            </select>
+            <select class="input" id="fpsSelect" style="width: auto">
+              <option value="30" selected>30 fps</option>
+              <option value="60">60 fps</option>
+            </select>
+          </div>
+          <div class="row">
+            <span class="label">Bitrate cap</span>
+            <select class="input" id="bitrateSelect" style="width: auto">
+              <option value="0">Auto</option>
+              <option value="800000">0.8 Mbps</option>
+              <option value="1500000" selected>1.5 Mbps</option>
+              <option value="3000000">3 Mbps</option>
+              <option value="6000000">6 Mbps</option>
+            </select>
+          </div>
+          <div class="row">
+            <span class="label">Mic</span>
+            <select class="input" id="micSelect"></select>
+            <button class="btn" id="muteBtn">Mute</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <script type="module" src="/js/broadcaster.js"></script>
+  </body>
+</html>
