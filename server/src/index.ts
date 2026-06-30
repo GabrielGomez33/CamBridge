@@ -38,9 +38,13 @@ app.get(`${api}/health`, async (_req, res) => {
 app.use(`${api}/auth`, authRoutes());
 app.use(api, sessionRoutes(store, logger));
 
-// Static client assets (dev convenience; nginx serves these in production).
+// Static client assets, served UNDER the base path so the whole app lives at one
+// mount point (e.g. /cambridge) behind Apache. Apache can either reverse-proxy
+// the whole base path here, or serve client/ itself and only proxy /api + /ws.
 const CLIENT_DIR = path.resolve(__dirname, '../../client');
-app.use(express.static(CLIENT_DIR, { extensions: ['html'] }));
+app.use(config.basePath, express.static(CLIENT_DIR, { extensions: ['html'] }));
+// Convenience redirect from root to the app.
+app.get('/', (_req, res) => res.redirect(`${config.basePath}/`));
 
 // ── HTTP + WebSocket ─────────────────────────────────────────────────────────
 const server = http.createServer(app);

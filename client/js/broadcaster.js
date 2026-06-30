@@ -7,6 +7,7 @@ import { Compositor } from './compositor.js';
 import { SignalingClient } from './signaling.js';
 import { BroadcasterRtc } from './rtc.js';
 import { startStats, fmtBitrate } from './stats.js';
+import { apiBase, pageBase } from './base.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -38,7 +39,7 @@ if (sessionId && passcode) {
 $('createBtn').addEventListener('click', async () => {
   $('createBtn').disabled = true;
   try {
-    const res = await fetch('/cambridge/api/sessions', {
+    const res = await fetch(`${apiBase()}/sessions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ title: $('title').value || '' }),
@@ -61,7 +62,7 @@ $('createBtn').addEventListener('click', async () => {
 function showStudio(viewerUrl) {
   $('create').classList.add('hidden');
   $('studio').classList.remove('hidden');
-  const link = viewerUrl || `${location.origin}/viewer.html?s=${encodeURIComponent(sessionId)}&p=${encodeURIComponent(passcode)}`;
+  const link = viewerUrl || `${location.origin}${pageBase()}/viewer.html?s=${encodeURIComponent(sessionId)}&p=${encodeURIComponent(passcode)}`;
   $('obsLink').value = link;
   $('passcodeText').textContent = passcode;
 }

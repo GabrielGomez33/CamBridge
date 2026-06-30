@@ -43,25 +43,48 @@ The pipeline reuses your existing deploy credentials, plus one new path:
 
 The deploy user needs passwordless `sudo pm2` (same as admin/mirror-server).
 
-## 3. nginx (reverse proxy + WebSocket upgrade)
+## 3. Apache (reverse proxy + WebSocket upgrade)
 
-```nginx
-# Inside your existing HTTPS server block (Let's Encrypt cert):
-location /cambridge/ {
-    proxy_pass http://127.0.0.1:8447;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;          # WebSocket
-    proxy_set_header Connection "upgrade";
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_read_timeout 3600s;                         # keep WS alive
-}
+The whole app (static client + REST + WS) lives under one base path and is served
+by the Node process on :8447. Apache just reverse-proxies `/cambridge` to it — no
+separate static `Alias`, no `client/dist` copy needed (Node serves `client/`).
+
+Enable the modules once:
+
+```bash
+sudo a2enmod proxy proxy_http proxy_wstunnel headers
+sudo systemctl reload apache2
 ```
 
-> `getUserMedia` (camera/mic) requires HTTPS. The Let's Encrypt cert that already
-> serves your domain covers this. For local phone testing without a public cert,
-> use [`mkcert`](https://github.com/FiloSottile/mkcert) to trust a LAN cert.
+Add to your existing HTTPS `<VirtualHost *:443>` for the domain (Let's Encrypt):
+
+```apache
+# CamBridge — proxy everything under /cambridge to the Node app on :8447.
+ProxyPreserveHost On
+RequestHeader set X-Forwarded-Proto "https"
+
+# WebSocket signaling — MUST come before the general /cambridge rule.
+ProxyPass        /cambridge/ws  ws://127.0.0.1:8447/cambridge/ws
+ProxyPassReverse /cambridge/ws  ws://127.0.0.1:8447/cambridge/ws
+
+# Static client + REST API.
+ProxyPass        /cambridge     http://127.0.0.1:8447/cambridge
+ProxyPassReverse /cambridge     http://127.0.0.1:8447/cambridge
+```
+
+Reload: `sudo systemctl reload apache2`. Then visit
+`https://<domain>/cambridge/`.
+
+> `getUserMedia` (camera/mic) requires HTTPS — your existing Let's Encrypt cert
+> covers it. For local phone testing without a public cert, use
+> [`mkcert`](https://github.com/FiloSottile/mkcert).
+
+### Optional: let Apache serve the static client directly
+
+For a busier deployment you can offload static files from Node: build/keep the
+client in `client/` (or `client/dist` once the React shell lands), `Alias
+/cambridge` to it, and only proxy `/cambridge/api` + `/cambridge/ws` to Node.
+The single-proxy form above is simpler and fine for normal load.
 
 ## 4. TURN (coturn) — Phase 2
 
