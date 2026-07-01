@@ -5,6 +5,7 @@ import { SignalingClient } from '../engine/signaling.js';
 import { BroadcasterRtc } from '../engine/rtc.js';
 import { startStats, fmtBitrate } from '../engine/stats.js';
 import { apiBase, pageBase } from '../engine/base.js';
+import { secureContextOk, describeError, listDevices, watchDevices } from '../engine/media.js';
 
 type Device = { deviceId: string; label: string };
 type Metrics = { bitrate: number; fps: number; res: string; rtt: number; loss: number } | null;
@@ -23,6 +24,7 @@ export default function Broadcaster() {
 
   const [live, setLive] = useState(false);
   const [status, setStatus] = useState<{ text: string; level: string }>({ text: 'Idle', level: 'warn' });
+  const [mediaError, setMediaError] = useState<{ title: string; detail: string } | null>(null);
   const [metrics, setMetrics] = useState<Metrics>(null);
   const [viewers, setViewers] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -79,49 +81,68 @@ export default function Broadcaster() {
 
   async function goLive() {
     if (live) return stopLive();
-    setStatus({ text: 'Starting camera', level: 'warn' });
+    setMediaError(null);
+
+    // Pre-flight: getUserMedia needs a secure context (HTTPS / localhost).
+    if (!secureContextOk()) {
+      setMediaError({
+        title: 'Secure connection required',
+        detail: 'Camera & microphone need HTTPS. Open this page over https:// and retry.',
+      });
+      setStatus({ text: 'Insecure context', level: 'danger' });
+      return;
+    }
+
+    // 1) Acquire the camera. `start()`'s first await IS getUserMedia, so the
+    //    user-gesture context is preserved (critical on iOS/Safari).
+    setStatus({ text: 'Requesting camera & mic', level: 'warn' });
     try {
       comp.current = new Compositor(canvasRef.current);
-      const stream = await comp.current.start({ resHeight: res, fps });
+      await comp.current.start({ resHeight: res, fps });
       comp.current.setMirror(mirror);
       comp.current.setAspect(aspect);
       await populateDevices();
       refreshTorch();
-
-      sig.current = new SignalingClient();
-      rtc.current = new BroadcasterRtc(sig.current);
-      rtc.current.setStream(stream);
-      rtc.current.onPeerCount = (n: number) => setViewers(n);
-
-      const join = () => sig.current.join(sessionId, passcode, 'broadcaster');
-      sig.current.addEventListener('open', join);
-      sig.current.addEventListener('reconnected', join);
-      sig.current.addEventListener('msg:joined', (e: any) => {
-        rtc.current.setIceServers(e.detail.iceServers);
-        rtc.current.setMaxBitrate(bitrate);
-        setStatus({ text: e.detail.turnEnabled ? 'Live · TURN ready' : 'Live', level: 'success' });
-      });
-      sig.current.addEventListener('msg:error', (e: any) => {
-        setStatus({ text: e.detail.message || 'Signal error', level: 'danger' });
-      });
-      sig.current.connect();
-
-      setLive(true);
-      await acquireWakeLock();
-      stopStats.current = startStats(
-        () => {
-          const first = rtc.current?.peers.values().next().value;
-          return first ? first.pc : null;
-        },
-        (m: Metrics) => {
-          setMetrics(m);
-          if (m) sig.current?.send({ type: 'stats', metrics: m });
-        }
-      );
-    } catch {
-      setStatus({ text: 'Camera blocked', level: 'danger' });
-      alert('Could not start the camera. Grant camera/mic permission and use HTTPS.');
+    } catch (err) {
+      const d = describeError(err);
+      setMediaError({ title: d.title, detail: d.detail });
+      setStatus({ text: d.title, level: 'danger' });
+      comp.current?.stop();
+      comp.current = null;
+      return;
     }
+
+    // 2) Connect WebRTC (the output stream is already built from the canvas).
+    sig.current = new SignalingClient();
+    rtc.current = new BroadcasterRtc(sig.current);
+    rtc.current.setStream(comp.current.outputStream);
+    rtc.current.onPeerCount = (n: number) => setViewers(n);
+
+    const join = () => sig.current.join(sessionId, passcode, 'broadcaster');
+    sig.current.addEventListener('open', join);
+    sig.current.addEventListener('reconnected', join);
+    sig.current.addEventListener('msg:joined', (e: any) => {
+      rtc.current.setIceServers(e.detail.iceServers);
+      rtc.current.setMaxBitrate(bitrate);
+      setStatus({ text: e.detail.turnEnabled ? 'Live · TURN ready' : 'Live', level: 'success' });
+    });
+    sig.current.addEventListener('msg:error', (e: any) => {
+      setStatus({ text: e.detail.message || 'Signal error', level: 'danger' });
+    });
+    sig.current.connect();
+
+    setLive(true);
+    await acquireWakeLock();
+    stopStats.current = startStats(
+      () => {
+        const first = rtc.current?.peers.values().next().value;
+        return first ? first.pc : null;
+      },
+      (m: Metrics) => {
+        setMetrics(m);
+        if (m) sig.current?.send({ type: 'stats', metrics: m });
+      }
+    );
   }
 
   function stopLive() {
@@ -136,15 +157,17 @@ export default function Broadcaster() {
   }
 
   async function populateDevices() {
-    const cams = await comp.current.listCameras();
-    setCameras(cams.map((c: any, i: number) => ({ deviceId: c.deviceId, label: c.label || `Camera ${i + 1}` })));
-    const devs = await navigator.mediaDevices.enumerateDevices();
-    setMics(
-      devs
-        .filter((d) => d.kind === 'audioinput')
-        .map((m, i) => ({ deviceId: m.deviceId, label: m.label || `Mic ${i + 1}` }))
-    );
+    const { cameras: cams, mics: ms } = await listDevices();
+    setCameras(cams);
+    setMics(ms);
   }
+
+  // Live-refresh device lists when a camera/mic is plugged in or removed.
+  useEffect(() => {
+    return watchDevices(() => {
+      if (comp.current) populateDevices();
+    });
+  }, []);
 
   function refreshTorch() {
     setTorchSupported('torch' in (comp.current?.videoCapabilities() || {}));
@@ -280,6 +303,14 @@ export default function Broadcaster() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <button className="btn primary" onClick={goLive}>{live ? 'Stop' : 'Go Live'}</button>
+            {mediaError && (
+              <div style={{ border: '1px solid var(--danger)', borderRadius: 'var(--radius-sm)', padding: 8 }}>
+                <div className="label" style={{ color: 'var(--danger)' }}>{mediaError.title}</div>
+                <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 4, lineHeight: 1.5 }}>
+                  {mediaError.detail}
+                </div>
+              </div>
+            )}
             <span className="label">OBS link</span>
             <div style={{ display: 'flex', gap: 6 }}>
               <input className="input" style={{ fontSize: 12 }} readOnly value={obsLink} />
