@@ -51,6 +51,8 @@ export const config = {
   sessionMaxMs: int('SESSION_MAX_MS', 1000 * 60 * 60 * 24), // absolute cap (24h)
   passcodeLength: int('PASSCODE_LENGTH', 6),
   maxLiveSessions: int('MAX_LIVE_SESSIONS', 500),
+  // Persist link metadata to `stream_sessions` so restarts don't kill links.
+  sessionPersist: bool('SESSION_PERSIST', true),
 
   // Signaling limits
   maxMessageBytes: int('MAX_MESSAGE_BYTES', 64 * 1024),
@@ -95,13 +97,20 @@ export const config = {
     requireEmailVerified: bool('LOGIN_REQUIRE_EMAIL_VERIFIED', false),
   },
 
-  // Email (Resend or Brevo)
+  // Email (Resend or Brevo) — used for sending stream links (and auth mail).
   email: {
     provider: (process.env.EMAIL_PROVIDER || 'resend').toLowerCase(),
     resendApiKey: process.env.RESEND_API_KEY || '',
     brevoApiKey: process.env.BREVO_API_KEY || '',
-    from: process.env.EMAIL_FROM || 'CamBridge <no-reply@cambridge.local>',
+    // Prefer EMAIL_FROM; else build "CamBridge <EMAIL_FROM_ADDRESS>" from the
+    // shared address so it sends from your verified domain.
+    from:
+      process.env.EMAIL_FROM ||
+      `CamBridge <${process.env.EMAIL_FROM_ADDRESS || 'no-reply@localhost'}>`,
     dryRun: bool('EMAIL_DRY_RUN', true),
+    // Sending the link by email is rate-limited per IP.
+    linkRateLimit: int('EMAIL_LINK_RATE_LIMIT', 5),
+    linkRateWindowMs: int('EMAIL_LINK_RATE_WINDOW_MS', 15 * 60_000),
   },
 
   // Public app URL used to build verification / reset links in emails.

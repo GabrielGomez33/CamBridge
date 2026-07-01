@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 import { config } from '../config';
+import { logger } from '../logger';
+import { insertSession, deleteSession, loadSessions, purgeExpired } from '../sessionRepo';
 
 // Unambiguous alphabet: no 0/O, 1/I/L — easy to read aloud / off a screen.
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -47,7 +49,49 @@ export class SessionStore {
       status: 'open',
     };
     this.sessions.set(session.id, session);
+    if (config.sessionPersist) {
+      insertSession({
+        id: session.id,
+        passcode: session.passcode,
+        title: session.title,
+        ownerUserId: session.ownerUserId,
+        createdAt: session.createdAt,
+      }).catch((err) => logger.warn({ err, sessionId: session.id }, 'session persist failed'));
+    }
     return session;
+  }
+
+  /**
+   * Load persisted links on boot so a restart/deploy doesn't invalidate them.
+   * Live peer state resets — broadcaster + OBS auto-reconnect and re-join.
+   */
+  async load(): Promise<number> {
+    if (!config.sessionPersist) return 0;
+    const now = Date.now();
+    const minCreated = now - config.sessionMaxMs;
+    let rows;
+    try {
+      rows = await loadSessions(minCreated);
+      void purgeExpired(minCreated);
+    } catch (err) {
+      logger.warn({ err }, 'session load failed — starting with an empty store');
+      return 0;
+    }
+    for (const r of rows) {
+      if (this.sessions.has(r.id)) continue;
+      this.sessions.set(r.id, {
+        id: r.id,
+        passcode: r.passcode,
+        title: r.title,
+        ownerUserId: r.ownerUserId,
+        broadcaster: null,
+        viewers: new Set(),
+        createdAt: r.createdAt,
+        lastActivity: now, // fresh idle window after restart
+        status: 'open',
+      });
+    }
+    return rows.length;
   }
 
   get(id: string): Session | undefined {
@@ -60,6 +104,9 @@ export class SessionStore {
 
   remove(id: string): void {
     this.sessions.delete(id);
+    if (config.sessionPersist) {
+      deleteSession(id).catch((err) => logger.warn({ err, sessionId: id }, 'session unpersist failed'));
+    }
   }
 
   /** Constant-time passcode check; tolerant of case. */
@@ -83,6 +130,11 @@ export class SessionStore {
       const expired = now - s.createdAt > config.sessionMaxMs;
       if (idle || expired) {
         this.sessions.delete(id);
+        if (config.sessionPersist) {
+          deleteSession(id).catch((err) =>
+            logger.warn({ err, sessionId: id }, 'session unpersist failed')
+          );
+        }
         removed++;
       }
     }

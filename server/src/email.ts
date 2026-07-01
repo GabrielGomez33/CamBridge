@@ -1,11 +1,12 @@
-import { config } from '../config';
-import { logger } from '../logger';
+import { config } from './config';
+import { logger } from './logger';
 
 type TemplateName =
   | 'welcome'
   | 'email_verification'
   | 'password_reset'
-  | 'email_change_verification';
+  | 'email_change_verification'
+  | 'stream_link';
 
 interface RenderedEmail {
   subject: string;
@@ -39,6 +40,15 @@ function render(template: TemplateName, data: Record<string, string>): RenderedE
         )} min):</p>
                <p><a href="${esc(data.resetUrl)}">Reset password</a></p>
                <p>Requested from ${esc(data.ipAddress || 'unknown')}. Ignore if this wasn't you.</p>`,
+      };
+    case 'stream_link':
+      return {
+        subject: `Your CamBridge stream link${data.title ? `: ${data.title}` : ''}`,
+        html: `<p>Here's your CamBridge viewer link${data.title ? ` for <b>${esc(data.title)}</b>` : ''}:</p>
+               <p><a href="${esc(data.viewerUrl)}">${esc(data.viewerUrl)}</a></p>
+               <p>Passcode: <b>${esc(data.passcode)}</b></p>
+               <p>Add this URL as a <b>Browser Source</b> in OBS (or any WebRTC viewer)
+                  to receive the live camera feed, peer-to-peer.</p>`,
       };
   }
 }

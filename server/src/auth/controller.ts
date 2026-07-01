@@ -6,7 +6,7 @@ import { DB } from '../db';
 import { config } from '../config';
 import { logger } from '../logger';
 import { TokenManager, SessionMeta } from './tokens';
-import { sendTemplate } from './email';
+import { sendTemplate } from '../email';
 import {
   sanitizeEmail,
   normalizePassword,
