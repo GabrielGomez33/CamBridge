@@ -7,6 +7,8 @@
 // resolution changes only what we draw, never the track identity (no WebRTC
 // renegotiation). Audio bypasses the canvas entirely.
 
+import { acquireCamera, acquireMic, listDevices } from './media.js';
+
 const ASPECTS = {
   '16:9': 16 / 9,
   '9:16': 9 / 16,
@@ -42,17 +44,20 @@ export class Compositor {
     this._deviceId = null;
   }
 
-  /** Start capture. Resolves once the first frame is drawable. */
+  /**
+   * Start capture. Resolves once the first frame is drawable. Acquisition runs
+   * through the robust media layer (fallback ladder + typed errors). MUST be the
+   * first awaited call in a user-gesture handler (iOS gesture preservation).
+   */
   async start(opts = {}) {
     Object.assign(this.settings, opts);
-    const constraints = {
-      video: this._videoConstraints(opts.deviceId, opts.facingMode || 'user'),
-      audio:
-        opts.audio === false
-          ? false
-          : { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    };
-    this.camStream = await navigator.mediaDevices.getUserMedia(constraints);
+    this.camStream = await acquireCamera({
+      deviceId: opts.deviceId,
+      facingMode: opts.facingMode || 'user',
+      resHeight: this.settings.resHeight,
+      fps: this.settings.fps,
+      audio: opts.audio !== false,
+    });
     this._deviceId = this._currentVideoSettings()?.deviceId || null;
 
     this.video.srcObject = this.camStream;
@@ -155,15 +160,16 @@ export class Compositor {
 
   // ── cameras ────────────────────────────────────────────────────────────────
   async listCameras() {
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    return devices.filter((d) => d.kind === 'videoinput');
+    return (await listDevices()).cameras;
   }
 
   /** Switch source camera. Output canvas track is unchanged → no renegotiation. */
   async switchCamera(deviceId) {
     const audio = this.camStream?.getAudioTracks()[0] || null;
-    const newStream = await navigator.mediaDevices.getUserMedia({
-      video: this._videoConstraints(deviceId, undefined),
+    const newStream = await acquireCamera({
+      deviceId,
+      resHeight: this.settings.resHeight,
+      fps: this.settings.fps,
       audio: false,
     });
     // Stop the old video track, keep audio.
@@ -204,10 +210,7 @@ export class Compositor {
   // ── audio ────────────────────────────────────────────────────────────────
   /** Switch mic; returns the new audio track so RTC can replaceTrack it. */
   async switchMic(deviceId) {
-    const s = await navigator.mediaDevices.getUserMedia({
-      audio: { deviceId: deviceId ? { exact: deviceId } : undefined },
-      video: false,
-    });
+    const s = await acquireMic({ deviceId });
     const newAudio = s.getAudioTracks()[0];
     const old = this.camStream?.getAudioTracks()[0];
     if (old) {
