@@ -2,21 +2,7 @@ import { Router, Request, Response } from 'express';
 import { config } from '../config';
 import type { Logger } from '../logger';
 import { SessionStore } from '../webrtc/sessions';
-
-// Tiny in-memory per-IP rate limiter (swap for Redis in multi-instance setups).
-function makeRateLimiter(limit: number, windowMs: number) {
-  const hits = new Map<string, { count: number; reset: number }>();
-  return (key: string): boolean => {
-    const now = Date.now();
-    const rec = hits.get(key);
-    if (!rec || now > rec.reset) {
-      hits.set(key, { count: 1, reset: now + windowMs });
-      return true;
-    }
-    rec.count++;
-    return rec.count <= limit;
-  };
-}
+import { makeRateLimiter } from '../util/rateLimit';
 
 function baseUrlFrom(req: Request): string {
   if (config.publicBaseUrl) return config.publicBaseUrl;

@@ -71,11 +71,17 @@ export class SessionStore {
     return crypto.timingSafeEqual(a, b);
   }
 
-  /** Drop sessions idle longer than the configured TTL. Returns count removed. */
+  /**
+   * Reclaim sessions that are either idle beyond the TTL (abandoned) or older
+   * than the absolute max lifetime (a passcode link must not live forever).
+   * Returns the count removed.
+   */
   sweep(now = Date.now()): number {
     let removed = 0;
     for (const [id, s] of this.sessions) {
-      if (now - s.lastActivity > config.sessionTtlMs) {
+      const idle = now - s.lastActivity > config.sessionTtlMs;
+      const expired = now - s.createdAt > config.sessionMaxMs;
+      if (idle || expired) {
         this.sessions.delete(id);
         removed++;
       }

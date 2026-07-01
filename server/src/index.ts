@@ -13,6 +13,8 @@ import { SessionStore } from './webrtc/sessions';
 import { attachSignaling } from './webrtc/signaling';
 import { sessionRoutes } from './routes/sessions';
 import { authRoutes } from './routes/auth';
+import { makeRateLimiter } from './util/rateLimit';
+import { clientIp } from './util/net';
 
 validateConfig(logger);
 
@@ -26,16 +28,19 @@ app.use(helmet({ contentSecurityPolicy: false })); // CSP tuned per-page in Phas
 app.use(express.json({ limit: '64kb' }));
 
 // Health probe (matches mirror/admin convention for the CI/CD health check).
-// Race the DB ping with a short timeout so a down database never hangs the probe.
+// Only reports DB status when accounts are enabled (else there's no database).
 app.get(`${api}/health`, async (_req, res) => {
+  const base = { ok: true, sessions: store.size, turn: config.turn.enabled };
+  if (!config.authEnabled) return res.json(base);
   const db = await Promise.race([
     dbHealthy(),
     new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1500)),
   ]);
-  res.json({ ok: true, sessions: store.size, turn: config.turn.enabled, db });
+  res.json({ ...base, db });
 });
 
-app.use(`${api}/auth`, authRoutes());
+// Accounts are optional; only expose the auth API when enabled.
+if (config.authEnabled) app.use(`${api}/auth`, authRoutes());
 app.use(api, sessionRoutes(store, logger));
 
 // Static client assets, served UNDER the base path so the whole app lives at one
@@ -57,6 +62,7 @@ app.use((req, res, next) => {
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true, maxPayload: config.maxMessageBytes });
 const signaling = attachSignaling(wss, store, logger);
+const allowWsConnect = makeRateLimiter(config.wsConnectLimit, config.wsConnectWindowMs);
 
 server.on('upgrade', (req, socket, head) => {
   const { pathname } = new URL(req.url || '', 'http://internal');
@@ -67,6 +73,13 @@ server.on('upgrade', (req, socket, head) => {
   if (!originAllowed(req.headers.origin)) {
     logger.warn({ origin: req.headers.origin }, 'ws upgrade rejected: origin not allowed');
     socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  // Per-IP WS connection flood protection.
+  if (!allowWsConnect(clientIp(req))) {
+    logger.warn({ ip: clientIp(req) }, 'ws upgrade rejected: rate limit');
+    socket.write('HTTP/1.1 429 Too Many Requests\r\n\r\n');
     socket.destroy();
     return;
   }
@@ -89,25 +102,23 @@ sweepTimer.unref?.();
 
 // ── lifecycle ─────────────────────────────────────────────────────────────────
 function bootstrap(): void {
-  if (!config.auth.jwtSecret || !config.auth.jwtRefreshSecret) {
-    logger.warn({}, 'JWT_SECRET / JWT_REFRESH_SECRET not set — auth endpoints will reject tokens.');
-  }
-
-  // Listen immediately so signaling/health are available without waiting on the
-  // DB. Migrations run in the background — failure is non-fatal: only the auth
-  // endpoints depend on the database.
   server.listen(config.port, config.host, () => {
     logger.info(
-      { host: config.host, port: config.port, env: config.env, base: config.basePath },
+      { host: config.host, port: config.port, env: config.env, base: config.basePath, auth: config.authEnabled },
       'CamBridge server listening'
     );
   });
 
-  runMigrations()
-    .then(() => logger.info({}, 'migrations up to date'))
-    .catch((err) =>
-      logger.error({ err }, 'migrations failed — auth endpoints unavailable until DB is reachable')
-    );
+  // The core (passcode-gated streaming) needs no database. Only touch MySQL /
+  // run migrations when accounts are enabled.
+  if (config.authEnabled) {
+    if (!config.auth.jwtSecret || !config.auth.jwtRefreshSecret) {
+      logger.warn({}, 'AUTH_ENABLED but JWT secrets are not set — auth will reject tokens.');
+    }
+    runMigrations()
+      .then(() => logger.info({}, 'migrations up to date'))
+      .catch((err) => logger.error({ err }, 'migrations failed — auth unavailable until DB is reachable'));
+  }
 }
 
 bootstrap();
