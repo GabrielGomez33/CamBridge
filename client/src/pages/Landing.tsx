@@ -30,6 +30,9 @@ export default function Landing() {
         <Link className="btn primary" to="/broadcaster" style={{ textAlign: 'center' }}>
           Start a stream
         </Link>
+        <Link to="/contact" style={{ fontSize: 12, color: 'var(--muted)' }}>
+          Contact &amp; inquiries
+        </Link>
       </div>
     </div>
   );
