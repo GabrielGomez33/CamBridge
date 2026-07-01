@@ -25,10 +25,18 @@ export async function runMigrations(): Promise<void> {
   for (const file of files) {
     if (applied.has(file)) continue;
     const sql = await fs.readFile(path.join(MIGRATIONS_DIR, file), 'utf8');
+    // Strip `--` line comments BEFORE splitting on `;` — a comment may itself
+    // contain a semicolon, which would otherwise chop it into invalid SQL.
     const statements = sql
+      .split('\n')
+      .map((line) => {
+        const i = line.indexOf('--');
+        return i >= 0 ? line.slice(0, i) : line;
+      })
+      .join('\n')
       .split(';')
       .map((s) => s.trim())
-      .filter((s) => s.length > 0 && !s.startsWith('--'));
+      .filter((s) => s.length > 0);
 
     const conn = await DB.getConnection();
     try {

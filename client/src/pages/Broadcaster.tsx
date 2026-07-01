@@ -33,6 +33,9 @@ export default function Broadcaster() {
   const [title, setTitle] = useState('');
   const [creating, setCreating] = useState(false);
   const [obsLink, setObsLink] = useState('');
+  const [emailTo, setEmailTo] = useState('');
+  const [emailStatus, setEmailStatus] = useState<string>(''); // '' | sending | sent | <error>
+
 
   const [live, setLive] = useState(false);
   const [status, setStatus] = useState<{ text: string; level: string }>({ text: 'Idle', level: 'warn' });
@@ -265,6 +268,23 @@ export default function Broadcaster() {
     }
   };
 
+  async function sendEmail() {
+    if (!sessionId || !emailTo) return;
+    setEmailStatus('sending');
+    try {
+      const r = await fetch(`${apiBase()}/sessions/${encodeURIComponent(sessionId)}/email`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ to: emailTo, passcode }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'send failed');
+      setEmailStatus('sent');
+    } catch (e) {
+      setEmailStatus((e as Error).message || 'send failed');
+    }
+  }
+
   // ── render ──────────────────────────────────────────────────────────────────
   if (view === 'create') {
     return (
@@ -334,6 +354,40 @@ export default function Broadcaster() {
               <button className="btn" onClick={copyLink}>Copy</button>
             </div>
             <div style={{ fontSize: 11, color: 'var(--muted)' }}>Passcode: <b>{passcode}</b></div>
+
+            <span className="label" style={{ marginTop: 4 }}>Email the link</span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input
+                className="input"
+                style={{ fontSize: 12 }}
+                type="email"
+                inputMode="email"
+                placeholder="recipient@example.com"
+                value={emailTo}
+                onChange={(e) => {
+                  setEmailTo(e.target.value);
+                  setEmailStatus('');
+                }}
+              />
+              <button className="btn" onClick={sendEmail} disabled={emailStatus === 'sending' || !emailTo}>
+                Send
+              </button>
+            </div>
+            {emailStatus && (
+              <div
+                style={{
+                  fontSize: 11,
+                  color:
+                    emailStatus === 'sent'
+                      ? 'var(--accent)'
+                      : emailStatus === 'sending'
+                      ? 'var(--muted)'
+                      : 'var(--danger)',
+                }}
+              >
+                {emailStatus === 'sent' ? 'Sent ✓' : emailStatus === 'sending' ? 'Sending…' : emailStatus}
+              </div>
+            )}
           </div>
 
           <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

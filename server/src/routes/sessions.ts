@@ -3,6 +3,9 @@ import { config } from '../config';
 import type { Logger } from '../logger';
 import { SessionStore } from '../webrtc/sessions';
 import { makeRateLimiter } from '../util/rateLimit';
+import { sendTemplate } from '../email';
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function baseUrlFrom(req: Request): string {
   if (config.publicBaseUrl) return config.publicBaseUrl;
@@ -16,6 +19,7 @@ function baseUrlFrom(req: Request): string {
 export function sessionRoutes(store: SessionStore, logger: Logger): Router {
   const router = Router();
   const allowCreate = makeRateLimiter(config.createRateLimit, config.createRateWindowMs);
+  const allowEmail = makeRateLimiter(config.email.linkRateLimit, config.email.linkRateWindowMs);
 
   // Create a dynamic link. Returns the broadcaster URL (phone) and the OBS
   // viewer URL (passcode embedded for the Browser Source).
@@ -44,6 +48,39 @@ export function sessionRoutes(store: SessionStore, logger: Logger): Router {
       broadcastUrl: `${base}/broadcaster?${q}`,
       viewerUrl: `${base}/viewer?${q}`,
     });
+  });
+
+  // Email the OBS viewer link to a recipient. Requires the session's passcode
+  // (so only someone who already holds the link can send it) + per-IP limit.
+  router.post('/sessions/:id/email', async (req: Request, res: Response) => {
+    if (!allowEmail(req.ip || 'unknown')) {
+      return res.status(429).json({ error: 'too many emails, slow down' });
+    }
+    const id = String(req.params.id || '');
+    const to = typeof req.body?.to === 'string' ? req.body.to.trim() : '';
+    const passcode = typeof req.body?.passcode === 'string' ? req.body.passcode : '';
+
+    if (!EMAIL_RE.test(to) || to.length > 254) {
+      return res.status(422).json({ error: 'enter a valid email address' });
+    }
+    const session = store.get(id);
+    if (!session) return res.status(404).json({ error: 'link not found or expired' });
+    if (!store.verifyPasscode(session, passcode)) {
+      return res.status(403).json({ error: 'incorrect passcode' });
+    }
+
+    const base = baseUrlFrom(req) + config.basePath;
+    const viewerUrl = `${base}/viewer?s=${encodeURIComponent(session.id)}&p=${encodeURIComponent(
+      session.passcode
+    )}`;
+    await sendTemplate(to, 'stream_link', {
+      viewerUrl,
+      passcode: session.passcode,
+      title: session.title,
+    });
+    logger.info({ sessionId: session.id }, 'stream link emailed');
+    // Generic success (don't leak whether the email address exists/received).
+    res.json({ message: 'If that address is valid, the link is on its way.' });
   });
 
   // Lightweight existence/status check used by the viewer before it joins.

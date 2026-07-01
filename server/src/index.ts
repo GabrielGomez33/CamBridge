@@ -22,6 +22,8 @@ const store = new SessionStore();
 const app = express();
 const api = `${config.basePath}/api`;
 const wsPath = `${config.basePath}/ws`;
+// The DB is used for accounts (auth) and/or link persistence.
+const needsDb = config.authEnabled || config.sessionPersist;
 
 app.set('trust proxy', config.trustProxyHops);
 app.use(helmet({ contentSecurityPolicy: false })); // CSP tuned per-page in Phase 2
@@ -31,7 +33,7 @@ app.use(express.json({ limit: '64kb' }));
 // Only reports DB status when accounts are enabled (else there's no database).
 app.get(`${api}/health`, async (_req, res) => {
   const base = { ok: true, sessions: store.size, turn: config.turn.enabled };
-  if (!config.authEnabled) return res.json(base);
+  if (!needsDb) return res.json(base);
   const db = await Promise.race([
     dbHealthy(),
     new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1500)),
@@ -109,15 +111,21 @@ function bootstrap(): void {
     );
   });
 
-  // The core (passcode-gated streaming) needs no database. Only touch MySQL /
-  // run migrations when accounts are enabled.
-  if (config.authEnabled) {
-    if (!config.auth.jwtSecret || !config.auth.jwtRefreshSecret) {
-      logger.warn({}, 'AUTH_ENABLED but JWT secrets are not set — auth will reject tokens.');
-    }
+  // Touch MySQL only when accounts or link-persistence need it. Failure is
+  // non-fatal: streaming still works in-memory.
+  if (config.authEnabled && (!config.auth.jwtSecret || !config.auth.jwtRefreshSecret)) {
+    logger.warn({}, 'AUTH_ENABLED but JWT secrets are not set — auth will reject tokens.');
+  }
+  if (needsDb) {
     runMigrations()
-      .then(() => logger.info({}, 'migrations up to date'))
-      .catch((err) => logger.error({ err }, 'migrations failed — auth unavailable until DB is reachable'));
+      .then(async () => {
+        logger.info({}, 'migrations up to date');
+        if (config.sessionPersist) {
+          const restored = await store.load();
+          if (restored) logger.info({ restored }, 'restored persisted links');
+        }
+      })
+      .catch((err) => logger.error({ err }, 'DB init failed — running in-memory only'));
   }
 }
 
