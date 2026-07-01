@@ -1,0 +1,19 @@
+# CamBridge SPA — served by Apache at /cambridge/ (bundled into dist by Vite).
+<IfModule mod_headers.c>
+  <FilesMatch "^index\.html$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+  # Vite content-hashes asset filenames — safe to cache forever.
+  <FilesMatch "\.[a-f0-9]{8,}\.(js|css|woff2?|ttf|svg|png|jpg|jpeg|gif|webp|avif)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+</IfModule>
+
+# React Router history fallback: serve real files as themselves, everything
+# else -> index.html so the client router can take over.
+RewriteEngine On
+RewriteBase /cambridge/
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+RewriteRule . index.html [L]

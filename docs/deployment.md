@@ -69,9 +69,10 @@ RewriteRule ^/cambridge/ws$ ws://127.0.0.1:8447/cambridge/ws [P,L]
 ProxyPass        /cambridge/api  http://127.0.0.1:8447/cambridge/api
 ProxyPassReverse /cambridge/api  http://127.0.0.1:8447/cambridge/api
 
-# --- CamBridge static client ---
-Alias "/cambridge" "/var/www/CamBridge/client"
-<Directory "/var/www/CamBridge/client">
+# --- CamBridge static client (Vite build -> client/dist, like /Mirror) ---
+RedirectMatch 301 ^/cambridge$ /cambridge/
+Alias "/cambridge" "/var/www/CamBridge/client/dist"
+<Directory "/var/www/CamBridge/client/dist">
     Options -Indexes +FollowSymLinks
     AllowOverride All
     Require all granted
@@ -82,16 +83,23 @@ Alias "/cambridge" "/var/www/CamBridge/client"
 sudo apachectl configtest && sudo systemctl reload apache2
 ```
 
-Then visit `https://<domain>/cambridge/`.
+Then visit `https://<domain>/cambridge/`. Clean routes (`/cambridge/broadcaster`,
+`/cambridge/viewer`) are handled by React Router; the bundled `.htaccess` does
+the history fallback and hashed-asset caching.
 
 > `getUserMedia` (camera/mic) requires HTTPS — your existing Let's Encrypt cert
 > covers it. For local phone testing without a public cert, use
 > [`mkcert`](https://github.com/FiloSottile/mkcert).
 
-> When the React shell lands it builds with Vite `base: '/cambridge/'` into
-> `client/dist`; point the `Alias` at `client/dist` (or copy it to the web root
-> in the deploy step, like admin's `npm run deploy`). The `.htaccess` already
-> handles hashed-asset caching and the history fallback.
+The client is a **Vite + React SPA** (like `/Mirror`, `/admin`). Build it on the
+server after pulling:
+
+```bash
+cd /var/www/CamBridge/client && npm ci && npm run build   # -> client/dist
+```
+
+CI does this automatically in the deploy job. `npm run dev` (with the Vite proxy
+to :8447) is for local development.
 
 ## 4. TURN (coturn) — Phase 2
 

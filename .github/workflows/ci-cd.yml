@@ -156,8 +156,8 @@ jobs:
           sudo pm2 startOrRestart ecosystem.config.js
 
           if [ -f "client/package.json" ]; then
-            echo "[4/5] Building & publishing client..."
-            cd client && npm ci && npm run deploy && cd ..
+            echo "[4/5] Building client (Vite -> client/dist, served by Apache)..."
+            cd client && npm ci && npm run build && cd ..
           else
             echo "[4/5] No client/ yet — skipping."
           fi

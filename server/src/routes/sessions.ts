@@ -55,8 +55,8 @@ export function sessionRoutes(store: SessionStore, logger: Logger): Router {
       sessionId: session.id,
       passcode: session.passcode,
       title: session.title,
-      broadcastUrl: `${base}/broadcaster.html?${q}`,
-      viewerUrl: `${base}/viewer.html?${q}`,
+      broadcastUrl: `${base}/broadcaster?${q}`,
+      viewerUrl: `${base}/viewer?${q}`,
     });
   });
 
