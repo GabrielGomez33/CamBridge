@@ -107,10 +107,16 @@ export const config = {
     from:
       process.env.EMAIL_FROM ||
       `CamBridge <${process.env.EMAIL_FROM_ADDRESS || 'no-reply@localhost'}>`,
-    dryRun: bool('EMAIL_DRY_RUN', true),
-    // Sending the link by email is rate-limited per IP.
+    // Match mirror-server: sending is ON unless EMAIL_DRY_RUN is explicitly true.
+    dryRun: bool('EMAIL_DRY_RUN', false),
+    // Where contact/inquiry emails are delivered (replies go to the sender).
+    supportInbox: (process.env.SUPPORT_INBOX_EMAIL || '').trim(),
+    // Emailing the link is rate-limited per IP.
     linkRateLimit: int('EMAIL_LINK_RATE_LIMIT', 5),
     linkRateWindowMs: int('EMAIL_LINK_RATE_WINDOW_MS', 15 * 60_000),
+    // Contact-form submissions are rate-limited per IP.
+    contactRateLimit: int('CONTACT_RATE_LIMIT', 5),
+    contactRateWindowMs: int('CONTACT_RATE_WINDOW_MS', 60 * 60_000),
   },
 
   // Public app URL used to build verification / reset links in emails.

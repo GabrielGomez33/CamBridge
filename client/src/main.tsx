@@ -5,6 +5,7 @@ import './index.css';
 import Landing from './pages/Landing';
 import Broadcaster from './pages/Broadcaster';
 import Viewer from './pages/Viewer';
+import Contact from './pages/Contact';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -14,6 +15,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/" element={<Landing />} />
         <Route path="/broadcaster" element={<Broadcaster />} />
         <Route path="/viewer" element={<Viewer />} />
+        <Route path="/contact" element={<Contact />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

@@ -13,6 +13,7 @@ import { SessionStore } from './webrtc/sessions';
 import { attachSignaling } from './webrtc/signaling';
 import { sessionRoutes } from './routes/sessions';
 import { authRoutes } from './routes/auth';
+import { contactRoutes } from './routes/contact';
 import { makeRateLimiter } from './util/rateLimit';
 import { clientIp } from './util/net';
 
@@ -44,6 +45,7 @@ app.get(`${api}/health`, async (_req, res) => {
 // Accounts are optional; only expose the auth API when enabled.
 if (config.authEnabled) app.use(`${api}/auth`, authRoutes());
 app.use(api, sessionRoutes(store, logger));
+app.use(api, contactRoutes(logger));
 
 // Static client assets, served UNDER the base path so the whole app lives at one
 // mount point (e.g. /cambridge) behind Apache. Apache can either reverse-proxy
