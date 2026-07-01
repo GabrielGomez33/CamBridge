@@ -142,4 +142,13 @@ export function validateConfig(log: { warn: (o: unknown, m?: string) => void }):
   if (config.env === 'production' && config.allowedOrigins.length === 0) {
     log.warn({}, 'ALLOWED_ORIGINS empty in production — signaling accepts any origin.');
   }
+  // A missing EMAIL_FROM_ADDRESS leaves an invalid "from" (…@localhost) that
+  // Resend/Brevo reject — surface it clearly rather than failing per-send.
+  if (!config.email.dryRun && /@localhost>?$/.test(config.email.from)) {
+    log.warn(
+      {},
+      'EMAIL_FROM_ADDRESS is not set — outgoing "from" is invalid (@localhost) and email will be rejected. ' +
+        'Set EMAIL_FROM_ADDRESS to a Resend-verified address.'
+    );
+  }
 }

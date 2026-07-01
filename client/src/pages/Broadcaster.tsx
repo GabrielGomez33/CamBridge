@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { Compositor, ASPECT_RATIOS } from '../engine/compositor.js';
 import { SignalingClient } from '../engine/signaling.js';
 import { BroadcasterRtc } from '../engine/rtc.js';
@@ -502,8 +502,13 @@ function Header({ status }: { status: { text: string; level: string } }) {
   return (
     <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
       <span className="wordmark">CAMBRIDGE <span className="sep">//</span> <span className="accent">BROADCAST</span></span>
-      <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>
-        <span className={`dot ${status.level}`} />{status.text}
+      <span style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <Link to="/contact" style={{ fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+          Contact
+        </Link>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+          <span className={`dot ${status.level}`} />{status.text}
+        </span>
       </span>
     </header>
   );
