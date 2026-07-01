@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { SignalingClient } from '../engine/signaling.js';
 import { ViewerRtc } from '../engine/rtc.js';
+import { startPeerStats, fmtBitrate, connLabel } from '../engine/stats.js';
 
 // OBS-facing viewer. Plays the incoming stream fullscreen and shows a clean
 // standby card whenever there's no live signal, so OBS never shows a frozen
@@ -11,12 +12,14 @@ export default function Viewer() {
   const sessionId = params.get('s');
   const passcode = params.get('p');
   const transparent = params.get('bg') === 'transparent';
+  const controlView = params.get('controlView') === '1';
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const [standby, setStandby] = useState<{ title: string; sub: string } | null>({
     title: 'Connecting',
     sub: 'CAMBRIDGE // VIEWER',
   });
+  const [stats, setStats] = useState<any>(null);
 
   useEffect(() => {
     const video = videoRef.current!;
@@ -52,9 +55,21 @@ export default function Viewer() {
     };
     rtc.onGone = () => setStandby({ title: 'Signal lost', sub: 'Reconnecting…' });
 
+    // Optional telemetry overlay (?controlView=1) — poll the single connection.
+    let stopStats: null | (() => void) = null;
+    if (controlView) {
+      stopStats = startPeerStats(
+        () => (rtc.pc ? new Map([['broadcaster', { pc: rtc.pc }]]) : new Map()),
+        (arr: any[]) => setStats(arr[0] || null)
+      );
+    }
+
     signaling.connect();
-    return () => signaling.close();
-  }, [sessionId, passcode]);
+    return () => {
+      signaling.close();
+      stopStats?.();
+    };
+  }, [sessionId, passcode, controlView]);
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: transparent ? 'transparent' : '#000' }}>
@@ -69,6 +84,18 @@ export default function Viewer() {
           background: transparent ? 'transparent' : '#000',
         }}
       />
+      {controlView && stats && (
+        <div className="hud" style={{ position: 'fixed' }}>
+          <span>{fmtBitrate(stats.bitrate)}</span>
+          <span>FPS <b>{stats.fps}</b></span>
+          {stats.res && <span>{stats.res}</span>}
+          <span>RTT <b>{stats.rtt}ms</b></span>
+          <span>LOSS <b>{stats.loss}%</b></span>
+          <span style={{ color: stats.connType === 'relay' ? 'var(--warn)' : 'var(--accent)' }}>
+            {connLabel(stats)}
+          </span>
+        </div>
+      )}
       {standby && (
         <div
           style={{
