@@ -73,14 +73,17 @@ export function sessionRoutes(store: SessionStore, logger: Logger): Router {
     const viewerUrl = `${base}/viewer?s=${encodeURIComponent(session.id)}&p=${encodeURIComponent(
       session.passcode
     )}`;
-    await sendTemplate(to, 'stream_link', {
+    const ok = await sendTemplate(to, 'stream_link', {
       viewerUrl,
       passcode: session.passcode,
       title: session.title,
     });
-    logger.info({ sessionId: session.id }, 'stream link emailed');
-    // Generic success (don't leak whether the email address exists/received).
-    res.json({ message: 'If that address is valid, the link is on its way.' });
+    if (!ok) {
+      logger.warn({ sessionId: session.id }, 'stream link email failed');
+      return res.status(502).json({ error: 'could not send email — check the server email config' });
+    }
+    logger.info({ sessionId: session.id, to }, 'stream link emailed');
+    res.json({ message: 'Link sent.' });
   });
 
   // Lightweight existence/status check used by the viewer before it joins.

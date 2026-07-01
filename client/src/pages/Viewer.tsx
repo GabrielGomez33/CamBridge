@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { SignalingClient } from '../engine/signaling.js';
 import { ViewerRtc } from '../engine/rtc.js';
 import { startPeerStats, fmtBitrate, connLabel } from '../engine/stats.js';
@@ -124,6 +124,12 @@ export default function Viewer() {
           <div style={{ fontSize: 11, letterSpacing: '0.08em', color: 'var(--muted)' }}>
             {standby.sub}
           </div>
+          <Link
+            to="/contact"
+            style={{ position: 'fixed', bottom: 14, fontSize: 11, letterSpacing: '0.08em', color: 'var(--muted)' }}
+          >
+            Contact
+          </Link>
         </div>
       )}
     </div>

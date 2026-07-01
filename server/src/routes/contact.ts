@@ -38,7 +38,9 @@ export function contactRoutes(logger: Logger): Router {
 
     const ok = await sendContactInquiry({ name, email, subject, message, ip: req.ip });
     logger.info({ email, ok }, 'contact inquiry received');
-    // Generic success — never leak whether delivery actually succeeded.
+    if (!ok) {
+      return res.status(502).json({ error: 'could not send your message — please try again later' });
+    }
     res.json({ message: 'Thanks — your message is on its way.' });
   });
 
