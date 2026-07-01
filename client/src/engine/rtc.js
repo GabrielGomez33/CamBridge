@@ -8,9 +8,10 @@ export class BroadcasterRtc {
   /**
    * @param {import('./signaling.js').SignalingClient} signaling
    */
-  constructor(signaling) {
+  constructor(signaling, opts = {}) {
     this.signaling = signaling;
     this.iceServers = [];
+    this.forceRelay = !!opts.forceRelay; // ?relay=1 → verify TURN (relay-only)
     this.stream = null; // MediaStream (canvas video + mic audio)
     this.maxBitrate = 0; // 0 = unlimited
     /** @type {Map<string, {pc: RTCPeerConnection, videoSender: RTCRtpSender|null, audioSender: RTCRtpSender|null}>} */
@@ -61,7 +62,10 @@ export class BroadcasterRtc {
 
   async _addViewer(viewerId) {
     if (this.peers.has(viewerId) || !this.stream) return;
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
+    const pc = new RTCPeerConnection({
+      iceServers: this.iceServers,
+      ...(this.forceRelay ? { iceTransportPolicy: 'relay' } : {}),
+    });
     const entry = { pc, videoSender: null, audioSender: null };
     this.peers.set(viewerId, entry);
 
@@ -131,10 +135,11 @@ export class ViewerRtc {
    * @param {import('./signaling.js').SignalingClient} signaling
    * @param {HTMLVideoElement} videoEl
    */
-  constructor(signaling, videoEl) {
+  constructor(signaling, videoEl, opts = {}) {
     this.signaling = signaling;
     this.videoEl = videoEl;
     this.iceServers = [];
+    this.forceRelay = !!opts.forceRelay; // ?relay=1 → verify TURN (relay-only)
     this.pc = null;
     this.broadcasterId = null;
     this.onTrack = null; // () => void  (first media arrived)
@@ -152,7 +157,10 @@ export class ViewerRtc {
   async _onOffer({ from, sdp }) {
     this._teardown();
     this.broadcasterId = from;
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
+    const pc = new RTCPeerConnection({
+      iceServers: this.iceServers,
+      ...(this.forceRelay ? { iceTransportPolicy: 'relay' } : {}),
+    });
     this.pc = pc;
 
     pc.ontrack = (e) => {

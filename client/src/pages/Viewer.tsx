@@ -29,7 +29,7 @@ export default function Viewer() {
     }
 
     const signaling = new SignalingClient();
-    const rtc = new ViewerRtc(signaling, video);
+    const rtc = new ViewerRtc(signaling, video, { forceRelay: params.get('relay') === '1' });
     const join = () => signaling.join(sessionId, passcode, 'viewer');
 
     signaling.addEventListener('open', join);
