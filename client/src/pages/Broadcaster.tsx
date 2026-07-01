@@ -3,12 +3,24 @@ import { useSearchParams } from 'react-router-dom';
 import { Compositor, ASPECT_RATIOS } from '../engine/compositor.js';
 import { SignalingClient } from '../engine/signaling.js';
 import { BroadcasterRtc } from '../engine/rtc.js';
-import { startStats, fmtBitrate } from '../engine/stats.js';
+import { startPeerStats, fmtBitrate, connLabel } from '../engine/stats.js';
 import { apiBase, pageBase } from '../engine/base.js';
 import { secureContextOk, describeError, listDevices, watchDevices } from '../engine/media.js';
 
 type Device = { deviceId: string; label: string };
-type Metrics = { bitrate: number; fps: number; res: string; rtt: number; loss: number } | null;
+type Metrics =
+  | {
+      bitrate: number;
+      fps: number;
+      res: string;
+      rtt: number;
+      loss: number;
+      connType?: string;
+      localType?: string;
+      remoteType?: string;
+      protocol?: string;
+    }
+  | null;
 
 export default function Broadcaster() {
   const [params, setParams] = useSearchParams();
@@ -26,7 +38,9 @@ export default function Broadcaster() {
   const [status, setStatus] = useState<{ text: string; level: string }>({ text: 'Idle', level: 'warn' });
   const [mediaError, setMediaError] = useState<{ title: string; detail: string } | null>(null);
   const [metrics, setMetrics] = useState<Metrics>(null);
+  const [peerStats, setPeerStats] = useState<any[]>([]);
   const [viewers, setViewers] = useState(0);
+  const controlView = params.get('controlView') === '1';
   const [paused, setPaused] = useState(false);
 
   const [cameras, setCameras] = useState<Device[]>([]);
@@ -133,14 +147,13 @@ export default function Broadcaster() {
 
     setLive(true);
     await acquireWakeLock();
-    stopStats.current = startStats(
-      () => {
-        const first = rtc.current?.peers.values().next().value;
-        return first ? first.pc : null;
-      },
-      (m: Metrics) => {
-        setMetrics(m);
-        if (m) sig.current?.send({ type: 'stats', metrics: m });
+    stopStats.current = startPeerStats(
+      () => rtc.current?.peers,
+      (arr: any[]) => {
+        setPeerStats(arr);
+        const primary = arr[0] || null;
+        setMetrics(primary);
+        if (primary) sig.current?.send({ type: 'stats', metrics: primary });
       }
     );
   }
@@ -154,6 +167,7 @@ export default function Broadcaster() {
     releaseWakeLock();
     setStatus({ text: 'Idle', level: 'warn' });
     setMetrics(null);
+    setPeerStats([]);
   }
 
   async function populateDevices() {
@@ -288,6 +302,9 @@ export default function Broadcaster() {
                 {metrics.res && <span>{metrics.res}</span>}
                 <span>RTT <b>{metrics.rtt}ms</b></span>
                 <span>LOSS <b>{metrics.loss}%</b></span>
+                <span style={{ color: metrics.connType === 'relay' ? 'var(--warn)' : 'var(--accent)' }}>
+                  {connLabel(metrics)}
+                </span>
               </>
             ) : null}
             <span>VIEWERS <b>{viewers}</b></span>
@@ -374,6 +391,55 @@ export default function Broadcaster() {
           </div>
         </div>
       </section>
+
+      {controlView && (
+        <section className="panel" style={{ marginTop: 12 }}>
+          <div className="wordmark" style={{ marginBottom: 4 }}>
+            CAMBRIDGE <span className="sep">//</span> <span className="accent">CONTROL</span>
+          </div>
+          <div className="label" style={{ marginBottom: 10 }}>
+            Per-connection telemetry · {peerStats.length} active
+          </div>
+          {peerStats.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+              {live ? 'Waiting for a viewer (OBS) to connect…' : 'Go live to see connections.'}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {peerStats.map((p) => (
+                <div
+                  key={p.peerId}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 1fr))',
+                    gap: 10,
+                    borderTop: '1px solid var(--border)',
+                    paddingTop: 10,
+                  }}
+                >
+                  <Stat label="Path" value={connLabel(p)} color={p.connType === 'relay' ? 'var(--warn)' : 'var(--accent)'} />
+                  <Stat label="Bitrate" value={fmtBitrate(p.bitrate)} />
+                  <Stat label="FPS" value={String(p.fps)} />
+                  <Stat label="Resolution" value={p.res || '—'} />
+                  <Stat label="RTT" value={`${p.rtt} ms`} />
+                  <Stat label="Loss" value={`${p.loss}%`} color={p.loss > 3 ? 'var(--warn)' : undefined} />
+                  <Stat label="ICE" value={`${p.localType || '?'} → ${p.remoteType || '?'}`} />
+                  <Stat label="Transport" value={(p.protocol || '—').toUpperCase()} />
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <span className="label">{label}</span>
+      <span style={{ fontSize: 13, color: color || 'var(--text)' }}>{value}</span>
     </div>
   );
 }

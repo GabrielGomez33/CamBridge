@@ -6,6 +6,8 @@ import type { Logger } from '../logger';
 import { buildIceConfig } from './ice';
 import { SessionStore, Session } from './sessions';
 import { parseMessage, isStr, validSdp, validCandidate, ClientMessage } from './validation';
+import { makeRateLimiter } from '../util/rateLimit';
+import { clientIp } from '../util/net';
 
 type Role = 'broadcaster' | 'viewer';
 
@@ -14,6 +16,7 @@ interface PeerSocket extends WebSocket {
   sessionId: string | null;
   role: Role | null;
   isAlive: boolean;
+  ip: string;
 }
 
 /**
@@ -39,6 +42,8 @@ export function attachSignaling(wss: WebSocketServer, store: SessionStore, logge
   const peers = new Map<string, PeerSocket>();
   // Dashboard observers (Phase 3) receive a copy of broadcaster `stats`.
   const dashboards = new Set<PeerSocket>();
+  // Passcode brute-force guard: too many bad-passcode joins from one IP → drop.
+  const allowJoinFail = makeRateLimiter(config.joinFailLimit, config.joinFailWindowMs);
 
   function send(ws: WebSocket | undefined, obj: unknown): void {
     if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
@@ -53,9 +58,10 @@ export function attachSignaling(wss: WebSocketServer, store: SessionStore, logge
     ws.sessionId = null;
     ws.role = null;
     ws.isAlive = true;
+    ws.ip = clientIp(req);
     peers.set(ws.peerId, ws);
 
-    logger.debug({ peerId: ws.peerId, ip: req.socket.remoteAddress }, 'ws connected');
+    logger.debug({ peerId: ws.peerId, ip: ws.ip }, 'ws connected');
 
     ws.on('pong', () => {
       ws.isAlive = true;
@@ -111,8 +117,16 @@ export function attachSignaling(wss: WebSocketServer, store: SessionStore, logge
     const session = store.get(msg.sessionId);
     if (!session) return fail(ws, 'no_session', 'no such session');
     if (!store.verifyPasscode(session, msg.passcode)) {
-      logger.warn({ sessionId: session.id, role: msg.role }, 'join rejected: bad passcode');
-      return fail(ws, 'bad_passcode', 'incorrect passcode');
+      fail(ws, 'bad_passcode', 'incorrect passcode');
+      // Throttle passcode guessing: after too many failures from one IP, drop
+      // the socket (reconnecting is itself WS-connect rate-limited).
+      if (!allowJoinFail(ws.ip)) {
+        logger.warn({ ip: ws.ip, sessionId: session.id }, 'join blocked: too many bad passcodes');
+        ws.close(4029, 'too many attempts');
+      } else {
+        logger.warn({ sessionId: session.id, role: msg.role }, 'join rejected: bad passcode');
+      }
+      return;
     }
 
     if (msg.role === 'broadcaster') {

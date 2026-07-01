@@ -40,11 +40,15 @@ export const config = {
   // Trust N reverse-proxy hops so req.ip reflects the real client (nginx).
   trustProxyHops: int('TRUST_PROXY_HOPS', 1),
 
-  // Whether creating a stream link requires a logged-in account.
+  // Accounts. Off by default — CamBridge's core (passcode-gated streaming) needs
+  // no accounts and no database. Flip on to expose the auth API + run migrations.
+  authEnabled: bool('AUTH_ENABLED', false),
+  // Whether creating a stream link requires a logged-in account (needs auth).
   requireAuthToCreate: bool('REQUIRE_AUTH_TO_CREATE', false),
 
   // Session lifecycle
-  sessionTtlMs: int('SESSION_TTL_MS', 1000 * 60 * 60 * 6),
+  sessionTtlMs: int('SESSION_TTL_MS', 1000 * 60 * 60 * 3), // idle sweep (3h)
+  sessionMaxMs: int('SESSION_MAX_MS', 1000 * 60 * 60 * 24), // absolute cap (24h)
   passcodeLength: int('PASSCODE_LENGTH', 6),
   maxLiveSessions: int('MAX_LIVE_SESSIONS', 500),
 
@@ -53,8 +57,12 @@ export const config = {
   heartbeatIntervalMs: int('HEARTBEAT_INTERVAL_MS', 30000),
 
   // Abuse limits
-  createRateLimit: int('CREATE_RATE_LIMIT', 20), // per IP
+  createRateLimit: int('CREATE_RATE_LIMIT', 20), // link creations per IP / window
   createRateWindowMs: int('CREATE_RATE_WINDOW_MS', 60_000),
+  wsConnectLimit: int('WS_CONNECT_LIMIT', 30), // WS upgrades per IP / window
+  wsConnectWindowMs: int('WS_CONNECT_WINDOW_MS', 60_000),
+  joinFailLimit: int('JOIN_FAIL_LIMIT', 10), // bad-passcode attempts per IP / window
+  joinFailWindowMs: int('JOIN_FAIL_WINDOW_MS', 10 * 60_000),
 
   // Public base URL for building shareable links (no trailing slash)
   publicBaseUrl: (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, ''),
