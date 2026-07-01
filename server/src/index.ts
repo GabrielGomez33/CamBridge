@@ -38,11 +38,22 @@ app.get(`${api}/health`, async (_req, res) => {
 app.use(`${api}/auth`, authRoutes());
 app.use(api, sessionRoutes(store, logger));
 
-// Static client assets (dev convenience; nginx serves these in production).
-const CLIENT_DIR = path.resolve(__dirname, '../../client');
-app.use(express.static(CLIENT_DIR, { extensions: ['html'] }));
+// Static client assets, served UNDER the base path so the whole app lives at one
+// mount point (e.g. /cambridge) behind Apache. Apache can either reverse-proxy
+// the whole base path here, or serve client/ itself and only proxy /api + /ws.
+const CLIENT_DIR = path.resolve(__dirname, '../../client/dist');
+app.use(config.basePath, express.static(CLIENT_DIR, { extensions: ['html'] }));
+// Convenience redirect from root to the app.
+app.get('/', (_req, res) => res.redirect(`${config.basePath}/`));
+// SPA history fallback for client routes (/cambridge/broadcaster, /viewer, …).
+// Apache also does this in production; this keeps direct hits working too.
+app.use((req, res, next) => {
+  if (req.method !== 'GET' || req.path.startsWith(api)) return next();
+  res.sendFile(path.join(CLIENT_DIR, 'index.html'), (err) => (err ? next() : undefined));
+});
 
 // ── HTTP + WebSocket ─────────────────────────────────────────────────────────
+// Plain HTTP on loopback — Apache terminates TLS and reverse-proxies to us.
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true, maxPayload: config.maxMessageBytes });
 const signaling = attachSignaling(wss, store, logger);

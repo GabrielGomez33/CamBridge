@@ -98,6 +98,9 @@ export class SignalingClient extends EventTarget {
 }
 
 export function defaultWsUrl() {
+  // Derive the WS path from the page location so the app works under any mount
+  // point (sub-path or domain root).
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${location.host}/cambridge/ws`;
+  const base = location.pathname.replace(/\/[^/]*$/, '');
+  return `${proto}//${location.host}${base}/ws`;
 }

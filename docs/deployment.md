@@ -43,25 +43,63 @@ The pipeline reuses your existing deploy credentials, plus one new path:
 
 The deploy user needs passwordless `sudo pm2` (same as admin/mirror-server).
 
-## 3. nginx (reverse proxy + WebSocket upgrade)
+## 3. Apache — same pattern as admin/Mirror
 
-```nginx
-# Inside your existing HTTPS server block (Let's Encrypt cert):
-location /cambridge/ {
-    proxy_pass http://127.0.0.1:8447;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;          # WebSocket
-    proxy_set_header Connection "upgrade";
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_read_timeout 3600s;                         # keep WS alive
-}
+Apache terminates TLS and **serves the static client itself** at `/cambridge/`
+(with `client/.htaccess` for caching + SPA fallback), and **proxies only the API
+and WebSocket** to the Node app on plain HTTP `127.0.0.1:8447`. Node never
+terminates TLS and is never exposed directly — identical to the `admin` service.
+
+Enable the modules once:
+
+```bash
+sudo a2enmod proxy proxy_http proxy_wstunnel rewrite headers
 ```
 
-> `getUserMedia` (camera/mic) requires HTTPS. The Let's Encrypt cert that already
-> serves your domain covers this. For local phone testing without a public cert,
-> use [`mkcert`](https://github.com/FiloSottile/mkcert) to trust a LAN cert.
+Add inside your existing HTTPS `<VirtualHost *:443>` for the domain:
+
+```apache
+# --- CamBridge WebSocket (must be among the RewriteRule [P] block) ---
+RewriteEngine On
+RewriteCond %{HTTP:Upgrade} =websocket [NC]
+RewriteCond %{HTTP:Connection} =upgrade [NC]
+RewriteRule ^/cambridge/ws$ ws://127.0.0.1:8447/cambridge/ws [P,L]
+
+# --- CamBridge API (BEFORE the static Alias, like /admin/api) ---
+ProxyPass        /cambridge/api  http://127.0.0.1:8447/cambridge/api
+ProxyPassReverse /cambridge/api  http://127.0.0.1:8447/cambridge/api
+
+# --- CamBridge static client (Vite build -> client/dist, like /Mirror) ---
+RedirectMatch 301 ^/cambridge$ /cambridge/
+Alias "/cambridge" "/var/www/CamBridge/client/dist"
+<Directory "/var/www/CamBridge/client/dist">
+    Options -Indexes +FollowSymLinks
+    AllowOverride All
+    Require all granted
+</Directory>
+```
+
+```bash
+sudo apachectl configtest && sudo systemctl reload apache2
+```
+
+Then visit `https://<domain>/cambridge/`. Clean routes (`/cambridge/broadcaster`,
+`/cambridge/viewer`) are handled by React Router; the bundled `.htaccess` does
+the history fallback and hashed-asset caching.
+
+> `getUserMedia` (camera/mic) requires HTTPS — your existing Let's Encrypt cert
+> covers it. For local phone testing without a public cert, use
+> [`mkcert`](https://github.com/FiloSottile/mkcert).
+
+The client is a **Vite + React SPA** (like `/Mirror`, `/admin`). Build it on the
+server after pulling:
+
+```bash
+cd /var/www/CamBridge/client && npm ci && npm run build   # -> client/dist
+```
+
+CI does this automatically in the deploy job. `npm run dev` (with the Vite proxy
+to :8447) is for local development.
 
 ## 4. TURN (coturn) — Phase 2
 

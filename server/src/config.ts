@@ -23,7 +23,9 @@ function list(name: string, def: string[]): string[] {
 }
 
 export const config = {
-  host: process.env.HOST || '0.0.0.0',
+  // Bind to loopback by default — Apache terminates TLS and proxies to us
+  // (admin pattern). Set HOST=0.0.0.0 only for direct LAN testing.
+  host: process.env.HOST || '127.0.0.1',
   port: int('CAMBRIDGE_PORT', 8447),
   env: process.env.NODE_ENV || 'development',
   logLevel: process.env.LOG_LEVEL || 'info',

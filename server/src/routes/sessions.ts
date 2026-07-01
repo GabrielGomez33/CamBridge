@@ -47,7 +47,7 @@ export function sessionRoutes(store: SessionStore, logger: Logger): Router {
 
     const title = typeof req.body?.title === 'string' ? req.body.title : '';
     const session = store.create({ title });
-    const base = baseUrlFrom(req);
+    const base = baseUrlFrom(req) + config.basePath; // e.g. https://host/cambridge
     const q = `s=${encodeURIComponent(session.id)}&p=${encodeURIComponent(session.passcode)}`;
     logger.info({ sessionId: session.id }, 'session created');
 
@@ -55,8 +55,8 @@ export function sessionRoutes(store: SessionStore, logger: Logger): Router {
       sessionId: session.id,
       passcode: session.passcode,
       title: session.title,
-      broadcastUrl: `${base}/broadcaster.html?${q}`,
-      viewerUrl: `${base}/viewer.html?${q}`,
+      broadcastUrl: `${base}/broadcaster?${q}`,
+      viewerUrl: `${base}/viewer?${q}`,
     });
   });
 
