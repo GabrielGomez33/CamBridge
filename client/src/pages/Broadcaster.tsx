@@ -186,6 +186,18 @@ export default function Broadcaster() {
     });
   }, []);
 
+  // Navigating away (e.g. tapping Home mid-stream) must tear down capture,
+  // peer connections, and the wake lock — else they leak past the page.
+  useEffect(() => {
+    return () => {
+      stopStats.current?.();
+      rtc.current?.closeAll();
+      sig.current?.close();
+      comp.current?.stop();
+      releaseWakeLock();
+    };
+  }, []);
+
   function refreshTorch() {
     setTorchSupported('torch' in (comp.current?.videoCapabilities() || {}));
   }
@@ -499,14 +511,22 @@ function Stat({ label, value, color }: { label: string; value: string; color?: s
 }
 
 function Header({ status }: { status: { text: string; level: string } }) {
+  const navLink = {
+    fontSize: 11,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase' as const,
+    color: 'var(--muted)',
+  };
   return (
     <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-      <span className="wordmark">CAMBRIDGE <span className="sep">//</span> <span className="accent">BROADCAST</span></span>
+      {/* Logo doubles as the home link (standard convention). */}
+      <Link to="/" className="wordmark" style={{ textDecoration: 'none', color: 'inherit' }}>
+        CAMBRIDGE <span className="sep">//</span> <span className="accent">BROADCAST</span>
+      </Link>
       <span style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-        <Link to="/contact" style={{ fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>
-          Contact
-        </Link>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+        <Link to="/" style={navLink}>Home</Link>
+        <Link to="/contact" style={navLink}>Contact</Link>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8, ...navLink }}>
           <span className={`dot ${status.level}`} />{status.text}
         </span>
       </span>
