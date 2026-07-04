@@ -321,7 +321,7 @@ export default function Broadcaster() {
   }
 
   return (
-    <div style={{ padding: 12 }}>
+    <div className="page">
       <Header status={status} />
       <section className="studio-grid">
         <div className="stage">

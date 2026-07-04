@@ -4,6 +4,21 @@
   min-height: 100dvh;
 }
 
+/* Standalone PWA on iOS uses a black-translucent status bar + viewport-fit=
+   cover, so content draws under the notch / home indicator. These keep it in
+   the safe area. `.page` pads a top-anchored layout (e.g. the broadcaster
+   header); `.safe-center` pads a flex-centered layout so it centers within the
+   VISIBLE area, not the full screen (otherwise the larger top inset makes it
+   sit slightly high). */
+.page {
+  padding: calc(env(safe-area-inset-top) + 12px) calc(env(safe-area-inset-right) + 12px)
+    calc(env(safe-area-inset-bottom) + 12px) calc(env(safe-area-inset-left) + 12px);
+}
+.safe-center {
+  padding: calc(env(safe-area-inset-top) + 20px) calc(env(safe-area-inset-right) + 20px)
+    calc(env(safe-area-inset-bottom) + 20px) calc(env(safe-area-inset-left) + 20px);
+}
+
 a {
   color: var(--accent);
   text-decoration: none;

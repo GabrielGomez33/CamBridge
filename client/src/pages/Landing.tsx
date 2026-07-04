@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 export default function Landing() {
   return (
     <div
+      className="safe-center"
       style={{
         minHeight: '100dvh',
         display: 'flex',
