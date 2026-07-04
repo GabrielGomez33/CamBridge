@@ -131,7 +131,7 @@ export default function Broadcaster() {
 
     // 2) Connect WebRTC (the output stream is already built from the canvas).
     sig.current = new SignalingClient();
-    rtc.current = new BroadcasterRtc(sig.current);
+    rtc.current = new BroadcasterRtc(sig.current, { forceRelay: params.get('relay') === '1' });
     rtc.current.setStream(comp.current.outputStream);
     rtc.current.onPeerCount = (n: number) => setViewers(n);
 
