@@ -300,7 +300,7 @@ export default function Broadcaster() {
   // ── render ──────────────────────────────────────────────────────────────────
   if (view === 'create') {
     return (
-      <div style={{ padding: 12 }}>
+      <div className="page">
         <Header status={status} />
         <section className="panel" style={{ maxWidth: 460, margin: '8vh auto 0', display: 'flex', flexDirection: 'column', gap: 14 }}>
           <h1 style={{ fontSize: 16, margin: '0 0 4px' }}>Create a stream link</h1>
