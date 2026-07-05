@@ -32,7 +32,7 @@ export default function Contact() {
   }
 
   return (
-    <div style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+    <div className="safe-center" style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <form onSubmit={submit} className="panel" style={{ width: '100%', maxWidth: 520, display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div className="wordmark" style={{ fontSize: 18 }}>
           CAMBRIDGE <span className="sep">//</span> <span className="accent">CONTACT</span>

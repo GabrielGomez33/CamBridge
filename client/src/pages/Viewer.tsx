@@ -85,7 +85,14 @@ export default function Viewer() {
         }}
       />
       {controlView && stats && (
-        <div className="hud" style={{ position: 'fixed' }}>
+        <div
+          className="hud"
+          style={{
+            position: 'fixed',
+            top: 'calc(8px + env(safe-area-inset-top))',
+            left: 'calc(8px + env(safe-area-inset-left))',
+          }}
+        >
           <span>{fmtBitrate(stats.bitrate)}</span>
           <span>FPS <b>{stats.fps}</b></span>
           {stats.res && <span>{stats.res}</span>}
@@ -98,6 +105,7 @@ export default function Viewer() {
       )}
       {standby && (
         <div
+          className="safe-center"
           style={{
             position: 'fixed',
             inset: 0,
@@ -126,7 +134,13 @@ export default function Viewer() {
           </div>
           <Link
             to="/contact"
-            style={{ position: 'fixed', bottom: 14, fontSize: 11, letterSpacing: '0.08em', color: 'var(--muted)' }}
+            style={{
+              position: 'fixed',
+              bottom: 'calc(14px + env(safe-area-inset-bottom))',
+              fontSize: 11,
+              letterSpacing: '0.08em',
+              color: 'var(--muted)',
+            }}
           >
             Contact
           </Link>

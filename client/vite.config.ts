@@ -12,7 +12,13 @@ export default defineConfig({
     // CamBridge has no push/offline-app-logic, it just needs an installable
     // shell + a precache so the camera UI opens instantly. No custom SW file.
     VitePWA({
-      registerType: 'autoUpdate',
+      // `prompt` (not autoUpdate): when a new build is deployed we show a
+      // "Reload" banner instead of silently reloading. Critically, this means
+      // the OBS /viewer page is never force-reloaded mid-stream on a deploy.
+      // We drive registration + the banner via useRegisterSW (UpdateBanner),
+      // so no auto-injected registration script.
+      registerType: 'prompt',
+      injectRegister: false,
       // Only precache the app shell. The /viewer route is an OBS Browser Source
       // that must always hit the live signaling server, so we never want a stale
       // SW intercepting API/WS — those are same-origin under /cambridge/api|ws.
