@@ -1,7 +1,16 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { registerSW } from 'virtual:pwa-register';
 import './index.css';
+
+// Register the service worker on every route EXCEPT the OBS viewer. The viewer
+// is a Browser Source that must always fetch live (no precache/interception),
+// and registering a SW there was throwing an "aborted" error in that context.
+// registerType is `autoUpdate`, so this self-activates new builds and reloads.
+if (!location.pathname.startsWith('/cambridge/viewer')) {
+  registerSW({ immediate: true });
+}
 import Landing from './pages/Landing';
 import Broadcaster from './pages/Broadcaster';
 import Viewer from './pages/Viewer';
