@@ -40,6 +40,14 @@ export class BroadcasterRtc {
     }
   }
 
+  /** Swap the camera track without renegotiation (direct mode: the outgoing
+   *  video IS the raw camera track, so switching cameras needs replaceTrack). */
+  async replaceVideoTrack(track) {
+    for (const { videoSender } of this.peers.values()) {
+      if (videoSender) await videoSender.replaceTrack(track);
+    }
+  }
+
   /** Cap encode bitrate (bps) on every peer — critical on cellular. */
   async setMaxBitrate(bps) {
     this.maxBitrate = bps;
