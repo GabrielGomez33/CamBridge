@@ -86,12 +86,14 @@ export default function Broadcaster() {
   const [fps, setFps] = useState(30);
   const [bitrate, setBitrate] = useState(1500000);
 
-  // iOS standalone PWA: WebKit delivers hidden/off-screen capture as black
-  // frames + muted audio (bug 252465) and is flaky with canvas.captureStream,
-  // so there we bypass the canvas — preview the raw camera in a visible <video>
-  // and send the raw getUserMedia tracks directly. Canvas compositor stays
-  // everywhere it works (desktop, Android, iOS Safari tab).
-  const directMode = useRef<boolean>(
+  // iOS home-screen (standalone) PWAs cannot reliably capture the camera/mic:
+  // WebKit's mediaserverd mis-classifies the capture session as backgrounded
+  // and starves the track at the OS layer — black video AND silent audio, even
+  // though permission is granted and WebRTC connects (WebKit bug 252465). No
+  // JS workaround fixes a source that produces no samples. The shipped industry
+  // fix (STRICH et al.) is to capture in Safari instead — so on iOS standalone
+  // we route the operator to Safari rather than showing a black stream.
+  const iosStandalone = useRef<boolean>(
     (() => {
       const ua = navigator.userAgent || '';
       const isIOS =
@@ -105,7 +107,6 @@ export default function Broadcaster() {
   ).current;
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const previewRef = useRef<HTMLVideoElement>(null);
   const comp = useRef<any>(null);
   const sig = useRef<any>(null);
   const rtc = useRef<any>(null);
@@ -161,15 +162,10 @@ export default function Broadcaster() {
     //    user-gesture context is preserved (critical on iOS/Safari).
     setStatus({ text: 'Requesting camera & mic', level: 'warn' });
     try {
-      comp.current = new Compositor(canvasRef.current, {
-        direct: directMode,
-        previewVideo: previewRef.current,
-      });
+      comp.current = new Compositor(canvasRef.current);
       await comp.current.start({ resHeight: res, fps });
-      if (!directMode) {
-        comp.current.setMirror(mirror);
-        comp.current.setAspect(aspect);
-      }
+      comp.current.setMirror(mirror);
+      comp.current.setAspect(aspect);
       await populateDevices();
       refreshTorch();
     } catch (err) {
@@ -281,9 +277,7 @@ export default function Broadcaster() {
     comp.current?.setAspect(a);
   };
   const switchCamera = async (id: string) => {
-    const newTrack = await comp.current?.switchCamera(id);
-    // Direct mode: the camera track IS the sent track → swap it on the senders.
-    if (newTrack) await rtc.current?.replaceVideoTrack(newTrack);
+    await comp.current?.switchCamera(id);
     refreshTorch();
   };
   const switchMic = async (id: string) => {
@@ -331,13 +325,11 @@ export default function Broadcaster() {
           await acquireWakeLock();
           resumeAudioSession(); // iOS suspends the audio session while hidden
           comp.current?.video.play().catch(() => {});
-          // iOS can leave capture tracks muted after backgrounding (WebKit
-          // #212040) — re-acquire and swap them onto the senders if so.
+          // iOS can leave capture tracks muted after backgrounding — re-acquire
+          // if so. The outgoing video is the canvas track (unchanged); only the
+          // mic bypasses the canvas, so only the audio sender needs swapping.
           const t = await comp.current?.recover?.();
-          if (t) {
-            if (t.video) await rtc.current?.replaceVideoTrack(t.video);
-            if (t.audio) await rtc.current?.replaceAudioTrack(t.audio);
-          }
+          if (t?.audio) await rtc.current?.replaceAudioTrack(t.audio);
         }
       }
     };
@@ -371,6 +363,18 @@ export default function Broadcaster() {
   }
 
   // ── render ──────────────────────────────────────────────────────────────────
+  // iOS home-screen app can't capture the camera (WebKit bug) — send the
+  // operator to Safari, where it works. Everything else (viewer/OBS, install,
+  // Android, desktop) is unaffected.
+  if (iosStandalone) {
+    return (
+      <div className="page">
+        <Header status={status} onStatusTap={toggleDebugByTap} />
+        <SafariGate />
+      </div>
+    );
+  }
+
   if (view === 'create') {
     return (
       <div className="page">
@@ -398,17 +402,7 @@ export default function Broadcaster() {
       <Header status={status} onStatusTap={toggleDebugByTap} />
       <section className="studio-grid">
         <div className="stage">
-          {directMode ? (
-            <video
-              ref={previewRef}
-              autoPlay
-              playsInline
-              muted
-              style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000', display: 'block' }}
-            />
-          ) : (
-            <canvas ref={canvasRef} style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000', display: 'block' }} />
-          )}
+          <canvas ref={canvasRef} style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000', display: 'block' }} />
           <div className="hud">
             {metrics ? (
               <>
@@ -491,43 +485,27 @@ export default function Broadcaster() {
               <select className="input" onChange={(e) => switchCamera(e.target.value)}>
                 {cameras.map((c) => <option key={c.deviceId} value={c.deviceId}>{c.label}</option>)}
               </select>
-              {!directMode && (
-                <button className={`btn ${mirror ? 'primary' : ''}`} onClick={toggleMirror}>Mirror</button>
-              )}
+              <button className={`btn ${mirror ? 'primary' : ''}`} onClick={toggleMirror}>Mirror</button>
             </div>
-            {!directMode && (
-              <div className="row">
-                <span className="label">Aspect</span>
-                <span className="seg">
-                  {ASPECT_RATIOS.map((a: string) => (
-                    <button key={a} className={aspect === a ? 'active' : ''} onClick={() => chooseAspect(a)}>{a}</button>
-                  ))}
-                </span>
-              </div>
-            )}
-            {directMode && (
-              <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5 }}>
-                Direct capture (iOS app): sends the raw camera for reliability —
-                image adjustments &amp; aspect crop are off here.
-              </div>
-            )}
+            <div className="row">
+              <span className="label">Aspect</span>
+              <span className="seg">
+                {ASPECT_RATIOS.map((a: string) => (
+                  <button key={a} className={aspect === a ? 'active' : ''} onClick={() => chooseAspect(a)}>{a}</button>
+                ))}
+              </span>
+            </div>
           </div>
 
-          {(!directMode || torchSupported) && (
-            <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {!directMode && (
-                <>
-                  <Slider label="Brightness" value={adj.brightness} onChange={(v) => setAdjustment('brightness', v)} />
-                  <Slider label="Contrast" value={adj.contrast} onChange={(v) => setAdjustment('contrast', v)} />
-                  <Slider label="Saturation" value={adj.saturation} onChange={(v) => setAdjustment('saturation', v)} />
-                  <Slider label="Zoom" value={adj.zoom} min={100} max={400} onChange={(v) => setAdjustment('zoom', v)} />
-                </>
-              )}
-              {torchSupported && (
-                <div className="row"><span className="label">Torch</span><button className="btn" onClick={toggleTorch}>{torchOn ? 'On' : 'Off'}</button></div>
-              )}
-            </div>
-          )}
+          <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <Slider label="Brightness" value={adj.brightness} onChange={(v) => setAdjustment('brightness', v)} />
+            <Slider label="Contrast" value={adj.contrast} onChange={(v) => setAdjustment('contrast', v)} />
+            <Slider label="Saturation" value={adj.saturation} onChange={(v) => setAdjustment('saturation', v)} />
+            <Slider label="Zoom" value={adj.zoom} min={100} max={400} onChange={(v) => setAdjustment('zoom', v)} />
+            {torchSupported && (
+              <div className="row"><span className="label">Torch</span><button className="btn" onClick={toggleTorch}>{torchOn ? 'On' : 'Off'}</button></div>
+            )}
+          </div>
 
           <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div className="row">
@@ -641,6 +619,49 @@ function DebugPanel({ live, diag }: { live: boolean; diag: any }) {
         </div>
       ))}
     </div>
+  );
+}
+
+function SafariGate() {
+  const url = typeof window !== 'undefined' ? window.location.href : '';
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* noop */
+    }
+  };
+  return (
+    <section
+      className="panel"
+      style={{ maxWidth: 460, margin: '8vh auto 0', display: 'flex', flexDirection: 'column', gap: 14 }}
+    >
+      <div className="wordmark" style={{ fontSize: 15 }}>
+        OPEN IN SAFARI TO GO LIVE
+      </div>
+      <p style={{ fontSize: 12.5, color: 'var(--muted-2)', lineHeight: 1.6, margin: 0 }}>
+        The installed app can't access the camera on iPhone/iPad — Apple's WebKit blocks live camera
+        capture in home-screen web apps (the feed comes through black &amp; silent). This is an iOS
+        limitation, not a CamBridge bug.
+      </p>
+      <p style={{ fontSize: 12.5, color: 'var(--muted-2)', lineHeight: 1.6, margin: 0 }}>
+        Open CamBridge in <b style={{ color: 'var(--text)' }}>Safari</b> to broadcast from this
+        device — everything works there.
+      </p>
+      <a className="btn primary" href={url} target="_blank" rel="noopener noreferrer" style={{ textAlign: 'center' }}>
+        Open in Safari
+      </a>
+      <button className="btn" onClick={copy}>
+        {copied ? 'Link copied ✓' : 'Copy link (paste in Safari)'}
+      </button>
+      <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.6, margin: 0 }}>
+        Note: this only affects capturing from <i>this</i> iPhone. Adding the viewer link to OBS, and
+        watching a stream, work fine in the installed app.
+      </p>
+    </section>
   );
 }
 
