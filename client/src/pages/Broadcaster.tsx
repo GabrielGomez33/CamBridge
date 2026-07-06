@@ -45,7 +45,32 @@ export default function Broadcaster() {
   const [peerStats, setPeerStats] = useState<any[]>([]);
   const [viewers, setViewers] = useState(0);
   const controlView = params.get('controlView') === '1';
-  const debug = params.get('debug') === '1';
+  // Debug overlay: enable via ?debug=1 OR (for standalone PWA with no address
+  // bar) by triple-tapping the status text. Persisted so it survives reloads.
+  const [debug, setDebug] = useState<boolean>(
+    () =>
+      params.get('debug') === '1' ||
+      (typeof localStorage !== 'undefined' && localStorage.getItem('cambridge.debug') === '1')
+  );
+  const tapRef = useRef<{ n: number; t: number }>({ n: 0, t: 0 });
+  const toggleDebugByTap = () => {
+    const now = Date.now();
+    const s = tapRef.current;
+    s.n = now - s.t < 800 ? s.n + 1 : 1;
+    s.t = now;
+    if (s.n >= 3) {
+      s.n = 0;
+      setDebug((d) => {
+        const next = !d;
+        try {
+          localStorage.setItem('cambridge.debug', next ? '1' : '0');
+        } catch {
+          /* ignore */
+        }
+        return next;
+      });
+    }
+  };
   const [paused, setPaused] = useState(false);
   const [diag, setDiag] = useState<any>(null);
 
@@ -316,7 +341,7 @@ export default function Broadcaster() {
   if (view === 'create') {
     return (
       <div className="page">
-        <Header status={status} />
+        <Header status={status} onStatusTap={toggleDebugByTap} />
         <section className="panel" style={{ maxWidth: 460, margin: '8vh auto 0', display: 'flex', flexDirection: 'column', gap: 14 }}>
           <h1 style={{ fontSize: 16, margin: '0 0 4px' }}>Create a stream link</h1>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -337,7 +362,7 @@ export default function Broadcaster() {
 
   return (
     <div className="page">
-      <Header status={status} />
+      <Header status={status} onStatusTap={toggleDebugByTap} />
       <section className="studio-grid">
         <div className="stage">
           <canvas ref={canvasRef} style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000', display: 'block' }} />
@@ -569,7 +594,7 @@ function Stat({ label, value, color }: { label: string; value: string; color?: s
   );
 }
 
-function Header({ status }: { status: { text: string; level: string } }) {
+function Header({ status, onStatusTap }: { status: { text: string; level: string }; onStatusTap?: () => void }) {
   const navLink = {
     fontSize: 11,
     letterSpacing: '0.08em',
@@ -585,7 +610,11 @@ function Header({ status }: { status: { text: string; level: string } }) {
       <span style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
         <Link to="/" style={navLink}>Home</Link>
         <Link to="/contact" style={navLink}>Contact</Link>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 8, ...navLink }}>
+        {/* Triple-tap toggles the debug overlay (works in standalone PWA). */}
+        <span
+          onClick={onStatusTap}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, ...navLink, cursor: 'default', userSelect: 'none' }}
+        >
           <span className={`dot ${status.level}`} />{status.text}
         </span>
       </span>
