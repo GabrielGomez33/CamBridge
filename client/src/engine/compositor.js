@@ -18,11 +18,37 @@ const ASPECTS = {
 };
 
 export class Compositor {
-  /** @param {HTMLCanvasElement} canvas */
-  constructor(canvas) {
+  /**
+   * @param {HTMLCanvasElement} canvas
+   * @param {{direct?: boolean, previewVideo?: HTMLVideoElement}} [opts]
+   *   direct = iOS standalone PWA path: send the RAW getUserMedia tracks
+   *   (no canvas.captureStream), previewed in a VISIBLE <video>. Standalone
+   *   WebKit delivers hidden/off-screen capture as black frames + muted audio
+   *   (WebKit #252465) and is flaky with canvas.captureStream — so on-screen
+   *   raw capture is the reliable path there.
+   */
+  constructor(canvas, opts = {}) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
-    this.video = document.createElement('video');
+    this.direct = !!opts.direct;
+    this.ctx = canvas ? canvas.getContext('2d', { alpha: false, desynchronized: true }) : null;
+
+    if (this.direct && opts.previewVideo) {
+      // Use the caller's VISIBLE on-screen <video> as both preview and source.
+      this.video = opts.previewVideo;
+      this._ownsVideo = false;
+    } else {
+      // Canvas mode: a hidden source <video> feeding the compositor. Must be
+      // attached to the DOM (not display:none) or standalone WebKit won't
+      // decode it (videoWidth stays 0 → black canvas). Kept visually hidden.
+      this.video = document.createElement('video');
+      this.video.style.cssText =
+        'position:fixed;top:0;left:0;width:1px;height:1px;min-width:1px;opacity:0.01;' +
+        'pointer-events:none;z-index:-1;transform:translateY(-100%);';
+      if (typeof document !== 'undefined' && document.body) {
+        document.body.appendChild(this.video);
+      }
+      this._ownsVideo = true;
+    }
     this.video.muted = true;
     this.video.defaultMuted = true;
     this.video.playsInline = true;
@@ -32,17 +58,6 @@ export class Compositor {
     this.video.setAttribute('playsinline', '');
     this.video.setAttribute('webkit-playsinline', '');
     this.video.setAttribute('autoplay', '');
-    // CRITICAL for installed PWAs on iOS: a <video> that isn't attached to the
-    // DOM (or is display:none) is NOT decoded by standalone-mode WebKit —
-    // videoWidth stays 0, the canvas draw loop paints nothing, and the captured
-    // stream is black (works in Safari-the-browser, fails in the home-screen
-    // app). Keep it in the document but visually hidden and off the layout.
-    this.video.style.cssText =
-      'position:fixed;top:0;left:0;width:1px;height:1px;min-width:1px;opacity:0.01;' +
-      'pointer-events:none;z-index:-1;transform:translateY(-100%);';
-    if (typeof document !== 'undefined' && document.body) {
-      document.body.appendChild(this.video);
-    }
     // iOS occasionally needs a nudge to actually start pushing frames once the
     // stream is attached — re-issue play() as the video becomes ready.
     const kick = () => this.video.play().catch(() => {});
@@ -93,17 +108,25 @@ export class Compositor {
     await this.video.play().catch((e) => {
       this._lastErr = 'play: ' + (e?.name || e);
     });
-    this._resizeCanvas();
 
+    const audio = this.camStream.getAudioTracks()[0];
+    // Keep the mic session alive on iOS standalone (silent tap, no echo).
+    if (audio) keepMicAlive(this.camStream);
+
+    if (this.direct) {
+      // Direct mode: the RAW camera + mic tracks ARE the outgoing stream. No
+      // canvas, no draw loop — the visible <video> is the local preview.
+      this.outputStream = this.camStream;
+      this._running = true;
+      return this.outputStream;
+    }
+
+    this._resizeCanvas();
     // Build the output stream: canvas video + the (untouched) mic track.
     const canvasStream = this.canvas.captureStream(this.settings.fps);
     const tracks = [canvasStream.getVideoTracks()[0]];
-    const audio = this.camStream.getAudioTracks()[0];
     if (audio) tracks.push(audio);
     this.outputStream = new MediaStream(tracks);
-
-    // Keep the mic session alive on iOS standalone (silent tap, no echo).
-    if (audio) keepMicAlive(this.camStream);
 
     this._startLoop();
     return this.outputStream;
@@ -121,6 +144,7 @@ export class Compositor {
   }
 
   _resizeCanvas() {
+    if (!this.canvas) return; // direct mode has no compositing canvas
     // Build the target frame around the configured short-edge resolution so
     // 720p means 1280x720 landscape or 720x1280 portrait, etc.
     const ar = ASPECTS[this.settings.aspect] || 16 / 9;
@@ -199,7 +223,13 @@ export class Compositor {
     return (await listDevices()).cameras;
   }
 
-  /** Switch source camera. Output canvas track is unchanged → no renegotiation. */
+  /**
+   * Switch source camera.
+   * - Canvas mode: the output canvas track is unchanged → no renegotiation.
+   * - Direct mode: the camera track IS the outgoing track, so this returns the
+   *   new video track for the caller to replaceTrack() on the RTP senders.
+   * @returns {Promise<MediaStreamTrack|null>} new video track in direct mode
+   */
   async switchCamera(deviceId) {
     const audio = this.camStream?.getAudioTracks()[0] || null;
     const newStream = await acquireCamera({
@@ -217,7 +247,12 @@ export class Compositor {
     this._deviceId = deviceId;
     this.video.srcObject = this.camStream;
     await this.video.play().catch(() => {});
+    if (this.direct) {
+      this.outputStream = this.camStream;
+      return newVideo; // caller: rtc.replaceVideoTrack(newVideo)
+    }
     this._resizeCanvas();
+    return null;
   }
 
   // ── native hardware controls (where the device supports them) ───────────────
@@ -266,6 +301,37 @@ export class Compositor {
     this.camStream?.getAudioTracks().forEach((t) => (t.enabled = !muted));
   }
 
+  /**
+   * Re-acquire capture if iOS muted/ended the tracks after the app was
+   * backgrounded (WebKit #212040 — standalone PWA silences tracks on
+   * background/route change). Returns the fresh { video, audio } tracks so the
+   * caller can replaceTrack() on the senders, or null if nothing was wrong.
+   */
+  async recover() {
+    const v = this.camStream?.getVideoTracks()[0];
+    const broken = !v || v.readyState === 'ended' || v.muted;
+    if (!broken) return null;
+    let fresh;
+    try {
+      fresh = await acquireCamera({
+        deviceId: this._deviceId || undefined,
+        resHeight: this.settings.resHeight,
+        fps: this.settings.fps,
+        audio: true,
+      });
+    } catch (e) {
+      this._lastErr = 'recover: ' + (e?.name || e);
+      return null;
+    }
+    this.camStream?.getTracks().forEach((t) => t.stop());
+    this.camStream = fresh;
+    this.video.srcObject = this.camStream;
+    await this.video.play().catch(() => {});
+    if (this.direct) this.outputStream = this.camStream;
+    keepMicAlive(this.camStream);
+    return { video: fresh.getVideoTracks()[0] || null, audio: fresh.getAudioTracks()[0] || null };
+  }
+
   /** Live pipeline state for the on-screen debug overlay (?debug=1). */
   diagnostics() {
     const v = this.video;
@@ -275,13 +341,14 @@ export class Compositor {
     const camA = this.camStream?.getAudioTracks()[0];
     const t = (tr) => (tr ? `${tr.readyState}${tr.muted ? '/muted' : ''}${tr.enabled ? '' : '/off'}` : '—');
     return {
+      mode: this.direct ? 'direct' : 'canvas',
       running: this._running,
       frames: this._frames,
       videoWH: `${v.videoWidth}x${v.videoHeight}`,
       videoReady: v.readyState,
       videoPaused: v.paused,
       inDom: !!v.isConnected,
-      canvasWH: `${this.canvas.width}x${this.canvas.height}`,
+      canvasWH: this.canvas ? `${this.canvas.width}x${this.canvas.height}` : 'n/a',
       camVideo: t(camV),
       camAudio: t(camA),
       outVideo: t(outV),
@@ -296,11 +363,12 @@ export class Compositor {
     releaseMicSink();
     this.camStream?.getTracks().forEach((t) => t.stop());
     this.outputStream?.getTracks().forEach((t) => t.stop());
-    // Detach the hidden source video we appended in the constructor.
+    // Clear the source video. Only remove it if WE created it (canvas mode) —
+    // in direct mode the <video> is owned by the caller's React tree.
     try {
       this.video.pause();
       this.video.srcObject = null;
-      this.video.remove();
+      if (this._ownsVideo) this.video.remove();
     } catch {
       /* noop */
     }

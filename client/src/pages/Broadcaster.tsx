@@ -86,7 +86,26 @@ export default function Broadcaster() {
   const [fps, setFps] = useState(30);
   const [bitrate, setBitrate] = useState(1500000);
 
+  // iOS standalone PWA: WebKit delivers hidden/off-screen capture as black
+  // frames + muted audio (bug 252465) and is flaky with canvas.captureStream,
+  // so there we bypass the canvas — preview the raw camera in a visible <video>
+  // and send the raw getUserMedia tracks directly. Canvas compositor stays
+  // everywhere it works (desktop, Android, iOS Safari tab).
+  const directMode = useRef<boolean>(
+    (() => {
+      const ua = navigator.userAgent || '';
+      const isIOS =
+        /iPad|iPhone|iPod/.test(ua) ||
+        (/Macintosh/.test(ua) && typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 1);
+      const standalone =
+        window.matchMedia?.('(display-mode: standalone)').matches ||
+        (navigator as any).standalone === true;
+      return isIOS && standalone;
+    })()
+  ).current;
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const previewRef = useRef<HTMLVideoElement>(null);
   const comp = useRef<any>(null);
   const sig = useRef<any>(null);
   const rtc = useRef<any>(null);
@@ -142,10 +161,15 @@ export default function Broadcaster() {
     //    user-gesture context is preserved (critical on iOS/Safari).
     setStatus({ text: 'Requesting camera & mic', level: 'warn' });
     try {
-      comp.current = new Compositor(canvasRef.current);
+      comp.current = new Compositor(canvasRef.current, {
+        direct: directMode,
+        previewVideo: previewRef.current,
+      });
       await comp.current.start({ resHeight: res, fps });
-      comp.current.setMirror(mirror);
-      comp.current.setAspect(aspect);
+      if (!directMode) {
+        comp.current.setMirror(mirror);
+        comp.current.setAspect(aspect);
+      }
       await populateDevices();
       refreshTorch();
     } catch (err) {
@@ -257,7 +281,9 @@ export default function Broadcaster() {
     comp.current?.setAspect(a);
   };
   const switchCamera = async (id: string) => {
-    await comp.current?.switchCamera(id);
+    const newTrack = await comp.current?.switchCamera(id);
+    // Direct mode: the camera track IS the sent track → swap it on the senders.
+    if (newTrack) await rtc.current?.replaceVideoTrack(newTrack);
     refreshTorch();
   };
   const switchMic = async (id: string) => {
@@ -305,6 +331,13 @@ export default function Broadcaster() {
           await acquireWakeLock();
           resumeAudioSession(); // iOS suspends the audio session while hidden
           comp.current?.video.play().catch(() => {});
+          // iOS can leave capture tracks muted after backgrounding (WebKit
+          // #212040) — re-acquire and swap them onto the senders if so.
+          const t = await comp.current?.recover?.();
+          if (t) {
+            if (t.video) await rtc.current?.replaceVideoTrack(t.video);
+            if (t.audio) await rtc.current?.replaceAudioTrack(t.audio);
+          }
         }
       }
     };
@@ -365,7 +398,17 @@ export default function Broadcaster() {
       <Header status={status} onStatusTap={toggleDebugByTap} />
       <section className="studio-grid">
         <div className="stage">
-          <canvas ref={canvasRef} style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000', display: 'block' }} />
+          {directMode ? (
+            <video
+              ref={previewRef}
+              autoPlay
+              playsInline
+              muted
+              style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000', display: 'block' }}
+            />
+          ) : (
+            <canvas ref={canvasRef} style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000', display: 'block' }} />
+          )}
           <div className="hud">
             {metrics ? (
               <>
@@ -448,27 +491,43 @@ export default function Broadcaster() {
               <select className="input" onChange={(e) => switchCamera(e.target.value)}>
                 {cameras.map((c) => <option key={c.deviceId} value={c.deviceId}>{c.label}</option>)}
               </select>
-              <button className={`btn ${mirror ? 'primary' : ''}`} onClick={toggleMirror}>Mirror</button>
+              {!directMode && (
+                <button className={`btn ${mirror ? 'primary' : ''}`} onClick={toggleMirror}>Mirror</button>
+              )}
             </div>
-            <div className="row">
-              <span className="label">Aspect</span>
-              <span className="seg">
-                {ASPECT_RATIOS.map((a: string) => (
-                  <button key={a} className={aspect === a ? 'active' : ''} onClick={() => chooseAspect(a)}>{a}</button>
-                ))}
-              </span>
-            </div>
-          </div>
-
-          <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <Slider label="Brightness" value={adj.brightness} onChange={(v) => setAdjustment('brightness', v)} />
-            <Slider label="Contrast" value={adj.contrast} onChange={(v) => setAdjustment('contrast', v)} />
-            <Slider label="Saturation" value={adj.saturation} onChange={(v) => setAdjustment('saturation', v)} />
-            <Slider label="Zoom" value={adj.zoom} min={100} max={400} onChange={(v) => setAdjustment('zoom', v)} />
-            {torchSupported && (
-              <div className="row"><span className="label">Torch</span><button className="btn" onClick={toggleTorch}>{torchOn ? 'On' : 'Off'}</button></div>
+            {!directMode && (
+              <div className="row">
+                <span className="label">Aspect</span>
+                <span className="seg">
+                  {ASPECT_RATIOS.map((a: string) => (
+                    <button key={a} className={aspect === a ? 'active' : ''} onClick={() => chooseAspect(a)}>{a}</button>
+                  ))}
+                </span>
+              </div>
+            )}
+            {directMode && (
+              <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5 }}>
+                Direct capture (iOS app): sends the raw camera for reliability —
+                image adjustments &amp; aspect crop are off here.
+              </div>
             )}
           </div>
+
+          {(!directMode || torchSupported) && (
+            <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {!directMode && (
+                <>
+                  <Slider label="Brightness" value={adj.brightness} onChange={(v) => setAdjustment('brightness', v)} />
+                  <Slider label="Contrast" value={adj.contrast} onChange={(v) => setAdjustment('contrast', v)} />
+                  <Slider label="Saturation" value={adj.saturation} onChange={(v) => setAdjustment('saturation', v)} />
+                  <Slider label="Zoom" value={adj.zoom} min={100} max={400} onChange={(v) => setAdjustment('zoom', v)} />
+                </>
+              )}
+              {torchSupported && (
+                <div className="row"><span className="label">Torch</span><button className="btn" onClick={toggleTorch}>{torchOn ? 'On' : 'Off'}</button></div>
+              )}
+            </div>
+          )}
 
           <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div className="row">
