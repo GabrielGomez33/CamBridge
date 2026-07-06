@@ -8,6 +8,7 @@
 // renegotiation). Audio bypasses the canvas entirely.
 
 import { acquireCamera, acquireMic, listDevices } from './media.js';
+import { primeAudioSession, keepMicAlive, releaseMicSink } from './audioSession.js';
 
 const ASPECTS = {
   '16:9': 16 / 9,
@@ -42,6 +43,11 @@ export class Compositor {
     if (typeof document !== 'undefined' && document.body) {
       document.body.appendChild(this.video);
     }
+    // iOS occasionally needs a nudge to actually start pushing frames once the
+    // stream is attached — re-issue play() as the video becomes ready.
+    const kick = () => this.video.play().catch(() => {});
+    this.video.addEventListener('loadedmetadata', kick);
+    this.video.addEventListener('canplay', kick);
 
     this.camStream = null; // raw getUserMedia stream
     this.outputStream = null; // canvas video + mic audio
@@ -68,6 +74,10 @@ export class Compositor {
    */
   async start(opts = {}) {
     Object.assign(this.settings, opts);
+    // Activate the iOS audio session synchronously, still inside the user
+    // gesture (before the getUserMedia await) — else standalone WebKit may hand
+    // back a suspended/silent mic track.
+    primeAudioSession();
     this.camStream = await acquireCamera({
       deviceId: opts.deviceId,
       facingMode: opts.facingMode || 'user',
@@ -87,6 +97,9 @@ export class Compositor {
     const audio = this.camStream.getAudioTracks()[0];
     if (audio) tracks.push(audio);
     this.outputStream = new MediaStream(tracks);
+
+    // Keep the mic session alive on iOS standalone (silent tap, no echo).
+    if (audio) keepMicAlive(this.camStream);
 
     this._startLoop();
     return this.outputStream;
@@ -120,17 +133,18 @@ export class Compositor {
   _startLoop() {
     if (this._running) return;
     this._running = true;
+    // Use requestAnimationFrame, NOT requestVideoFrameCallback. rVFC is
+    // throttled — and in the iOS home-screen PWA context effectively never
+    // fires — for a hidden / off-screen <video>, which stalls the draw loop
+    // after the first frame (black canvas, black captured stream). rAF is
+    // driven by the visible page, so it keeps ticking; drawImage reads the
+    // decoded frame from the hidden source regardless of its CSS visibility.
     const draw = () => {
       if (!this._running) return;
       this._drawFrame();
-      // Prefer requestVideoFrameCallback (battery-friendly, real frames).
-      if (this.video.requestVideoFrameCallback) {
-        this._rafId = this.video.requestVideoFrameCallback(draw);
-      } else {
-        this._rafId = requestAnimationFrame(draw);
-      }
+      this._rafId = requestAnimationFrame(draw);
     };
-    draw();
+    this._rafId = requestAnimationFrame(draw);
   }
 
   _drawFrame() {
@@ -239,6 +253,8 @@ export class Compositor {
     const outOld = this.outputStream?.getAudioTracks()[0];
     if (outOld) this.outputStream.removeTrack(outOld);
     this.outputStream?.addTrack(newAudio);
+    // Rebuild the iOS keep-alive tap around the new mic.
+    if (this.camStream) keepMicAlive(this.camStream);
     return newAudio;
   }
   setMuted(muted) {
@@ -247,7 +263,8 @@ export class Compositor {
 
   stop() {
     this._running = false;
-    if (this._rafId && !this.video.requestVideoFrameCallback) cancelAnimationFrame(this._rafId);
+    if (this._rafId) cancelAnimationFrame(this._rafId);
+    releaseMicSink();
     this.camStream?.getTracks().forEach((t) => t.stop());
     this.outputStream?.getTracks().forEach((t) => t.stop());
     // Detach the hidden source video we appended in the constructor.
