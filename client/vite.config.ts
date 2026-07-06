@@ -24,6 +24,10 @@ export default defineConfig({
       // waiting behind the old cached one indefinitely, which traps the
       // standalone app on stale code (works in Safari, "broken" in the PWA).
       registerType: 'autoUpdate',
+      // We register the SW ourselves (main.tsx) so we can SKIP it on /viewer —
+      // that route is an OBS Browser Source, which must always fetch live and
+      // was throwing "Failed to register a ServiceWorker … aborted" there.
+      injectRegister: false,
       // Only precache the app shell. The /viewer route is an OBS Browser Source
       // that must always hit the live signaling server, so we never want a stale
       // SW intercepting API/WS — those are same-origin under /cambridge/api|ws.
