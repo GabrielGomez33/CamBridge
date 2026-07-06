@@ -6,6 +6,12 @@ import { VitePWA } from 'vite-plugin-pwa';
 // basename, and Apache history-fallbacks to index.html.
 export default defineConfig({
   base: '/cambridge/',
+  // Build stamp so we can confirm which bundle a device is actually running
+  // (surfaced by the ?debug=1 overlay). Helps distinguish "bug" from "stale
+  // service-worker cache".
+  define: {
+    __BUILD_ID__: JSON.stringify(new Date().toISOString().replace('T', ' ').slice(0, 19) + 'Z'),
+  },
   plugins: [
     react(),
     // Installable PWA. We use the generated-service-worker strategy (Workbox) —
