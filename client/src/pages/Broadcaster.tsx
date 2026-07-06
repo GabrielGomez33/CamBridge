@@ -6,6 +6,7 @@ import { BroadcasterRtc } from '../engine/rtc.js';
 import { startPeerStats, fmtBitrate, connLabel } from '../engine/stats.js';
 import { apiBase, pageBase } from '../engine/base.js';
 import { secureContextOk, describeError, listDevices, watchDevices } from '../engine/media.js';
+import { resumeAudioSession } from '../engine/audioSession.js';
 
 type Device = { deviceId: string; label: string };
 type Metrics =
@@ -264,6 +265,7 @@ export default function Broadcaster() {
         setPaused(false);
         if (live) {
           await acquireWakeLock();
+          resumeAudioSession(); // iOS suspends the audio session while hidden
           comp.current?.video.play().catch(() => {});
         }
       }
