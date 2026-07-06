@@ -23,8 +23,25 @@ export class Compositor {
     this.ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
     this.video = document.createElement('video');
     this.video.muted = true;
+    this.video.defaultMuted = true;
     this.video.playsInline = true;
     this.video.autoplay = true;
+    // Belt-and-suspenders for older/stricter WebKit (attributes, not just props).
+    this.video.setAttribute('muted', '');
+    this.video.setAttribute('playsinline', '');
+    this.video.setAttribute('webkit-playsinline', '');
+    this.video.setAttribute('autoplay', '');
+    // CRITICAL for installed PWAs on iOS: a <video> that isn't attached to the
+    // DOM (or is display:none) is NOT decoded by standalone-mode WebKit —
+    // videoWidth stays 0, the canvas draw loop paints nothing, and the captured
+    // stream is black (works in Safari-the-browser, fails in the home-screen
+    // app). Keep it in the document but visually hidden and off the layout.
+    this.video.style.cssText =
+      'position:fixed;top:0;left:0;width:1px;height:1px;min-width:1px;opacity:0.01;' +
+      'pointer-events:none;z-index:-1;transform:translateY(-100%);';
+    if (typeof document !== 'undefined' && document.body) {
+      document.body.appendChild(this.video);
+    }
 
     this.camStream = null; // raw getUserMedia stream
     this.outputStream = null; // canvas video + mic audio
@@ -233,6 +250,14 @@ export class Compositor {
     if (this._rafId && !this.video.requestVideoFrameCallback) cancelAnimationFrame(this._rafId);
     this.camStream?.getTracks().forEach((t) => t.stop());
     this.outputStream?.getTracks().forEach((t) => t.stop());
+    // Detach the hidden source video we appended in the constructor.
+    try {
+      this.video.pause();
+      this.video.srcObject = null;
+      this.video.remove();
+    } catch {
+      /* noop */
+    }
   }
 }
 
