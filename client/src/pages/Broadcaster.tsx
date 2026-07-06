@@ -45,7 +45,34 @@ export default function Broadcaster() {
   const [peerStats, setPeerStats] = useState<any[]>([]);
   const [viewers, setViewers] = useState(0);
   const controlView = params.get('controlView') === '1';
+  // Debug overlay: enable via ?debug=1 OR (for standalone PWA with no address
+  // bar) by triple-tapping the status text. Persisted so it survives reloads.
+  const [debug, setDebug] = useState<boolean>(
+    () =>
+      params.get('debug') === '1' ||
+      (typeof localStorage !== 'undefined' && localStorage.getItem('cambridge.debug') === '1')
+  );
+  const tapRef = useRef<{ n: number; t: number }>({ n: 0, t: 0 });
+  const toggleDebugByTap = () => {
+    const now = Date.now();
+    const s = tapRef.current;
+    s.n = now - s.t < 800 ? s.n + 1 : 1;
+    s.t = now;
+    if (s.n >= 3) {
+      s.n = 0;
+      setDebug((d) => {
+        const next = !d;
+        try {
+          localStorage.setItem('cambridge.debug', next ? '1' : '0');
+        } catch {
+          /* ignore */
+        }
+        return next;
+      });
+    }
+  };
   const [paused, setPaused] = useState(false);
+  const [diag, setDiag] = useState<any>(null);
 
   const [cameras, setCameras] = useState<Device[]>([]);
   const [mics, setMics] = useState<Device[]>([]);
@@ -187,6 +214,17 @@ export default function Broadcaster() {
     });
   }, []);
 
+  // Debug overlay (?debug=1): poll the compositor's live pipeline state so we
+  // can see, on-device, exactly where capture breaks (frames drawn, track
+  // states, video decode) instead of only a black rectangle.
+  useEffect(() => {
+    if (!debug) return;
+    const id = setInterval(() => {
+      setDiag(comp.current ? comp.current.diagnostics() : null);
+    }, 500);
+    return () => clearInterval(id);
+  }, [debug]);
+
   // Navigating away (e.g. tapping Home mid-stream) must tear down capture,
   // peer connections, and the wake lock — else they leak past the page.
   useEffect(() => {
@@ -303,7 +341,7 @@ export default function Broadcaster() {
   if (view === 'create') {
     return (
       <div className="page">
-        <Header status={status} />
+        <Header status={status} onStatusTap={toggleDebugByTap} />
         <section className="panel" style={{ maxWidth: 460, margin: '8vh auto 0', display: 'flex', flexDirection: 'column', gap: 14 }}>
           <h1 style={{ fontSize: 16, margin: '0 0 4px' }}>Create a stream link</h1>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -324,7 +362,7 @@ export default function Broadcaster() {
 
   return (
     <div className="page">
-      <Header status={status} />
+      <Header status={status} onStatusTap={toggleDebugByTap} />
       <section className="studio-grid">
         <div className="stage">
           <canvas ref={canvasRef} style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000', display: 'block' }} />
@@ -499,6 +537,50 @@ export default function Broadcaster() {
           )}
         </section>
       )}
+      {debug && <DebugPanel live={live} diag={diag} />}
+    </div>
+  );
+}
+
+function DebugPanel({ live, diag }: { live: boolean; diag: any }) {
+  const rows: [string, string][] = [
+    ['build', __BUILD_ID__],
+    ['live', String(live)],
+    ['drawing', diag ? `${diag.running} · ${diag.frames} frames` : '—'],
+    ['video decode', diag ? `${diag.videoWH} ready=${diag.videoReady} paused=${diag.videoPaused}` : '—'],
+    ['video in DOM', diag ? String(diag.inDom) : '—'],
+    ['canvas', diag ? diag.canvasWH : '—'],
+    ['cam track', diag ? `v:${diag.camVideo} a:${diag.camAudio}` : '—'],
+    ['out track', diag ? `v:${diag.outVideo} a:${diag.outAudio}` : '—'],
+    ['last error', diag?.lastErr || '—'],
+  ];
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        left: 'calc(8px + env(safe-area-inset-left))',
+        bottom: 'calc(8px + env(safe-area-inset-bottom))',
+        zIndex: 9998,
+        maxWidth: 'calc(100vw - 16px)',
+        background: 'rgba(10,10,10,0.92)',
+        border: '1px solid var(--accent-dim)',
+        borderRadius: 'var(--radius-sm)',
+        padding: '8px 10px',
+        fontSize: 10,
+        lineHeight: 1.5,
+        color: 'var(--text)',
+        fontFamily: 'var(--font-mono)',
+      }}
+    >
+      <div className="wordmark" style={{ fontSize: 10, marginBottom: 4 }}>
+        CAMBRIDGE <span className="sep">//</span> <span className="accent">DEBUG</span>
+      </div>
+      {rows.map(([k, v]) => (
+        <div key={k} style={{ display: 'flex', gap: 8 }}>
+          <span style={{ color: 'var(--muted)', minWidth: 92 }}>{k}</span>
+          <span style={{ color: k === 'last error' && v !== '—' ? 'var(--danger)' : 'var(--text)', wordBreak: 'break-all' }}>{v}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -512,7 +594,7 @@ function Stat({ label, value, color }: { label: string; value: string; color?: s
   );
 }
 
-function Header({ status }: { status: { text: string; level: string } }) {
+function Header({ status, onStatusTap }: { status: { text: string; level: string }; onStatusTap?: () => void }) {
   const navLink = {
     fontSize: 11,
     letterSpacing: '0.08em',
@@ -528,7 +610,11 @@ function Header({ status }: { status: { text: string; level: string } }) {
       <span style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
         <Link to="/" style={navLink}>Home</Link>
         <Link to="/contact" style={navLink}>Contact</Link>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 8, ...navLink }}>
+        {/* Triple-tap toggles the debug overlay (works in standalone PWA). */}
+        <span
+          onClick={onStatusTap}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, ...navLink, cursor: 'default', userSelect: 'none' }}
+        >
           <span className={`dot ${status.level}`} />{status.text}
         </span>
       </span>

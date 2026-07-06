@@ -53,6 +53,8 @@ export class Compositor {
     this.outputStream = null; // canvas video + mic audio
     this._rafId = 0;
     this._running = false;
+    this._frames = 0; // drawn-frame counter (diagnostics)
+    this._lastErr = ''; // last non-fatal pipeline error (diagnostics)
 
     this.settings = {
       brightness: 1,
@@ -88,7 +90,9 @@ export class Compositor {
     this._deviceId = this._currentVideoSettings()?.deviceId || null;
 
     this.video.srcObject = this.camStream;
-    await this.video.play().catch(() => {});
+    await this.video.play().catch((e) => {
+      this._lastErr = 'play: ' + (e?.name || e);
+    });
     this._resizeCanvas();
 
     // Build the output stream: canvas video + the (untouched) mic track.
@@ -150,6 +154,7 @@ export class Compositor {
   _drawFrame() {
     const { ctx, canvas, video, settings } = this;
     if (!video.videoWidth) return;
+    this._frames++;
     const W = canvas.width;
     const H = canvas.height;
 
@@ -259,6 +264,30 @@ export class Compositor {
   }
   setMuted(muted) {
     this.camStream?.getAudioTracks().forEach((t) => (t.enabled = !muted));
+  }
+
+  /** Live pipeline state for the on-screen debug overlay (?debug=1). */
+  diagnostics() {
+    const v = this.video;
+    const outV = this.outputStream?.getVideoTracks()[0];
+    const outA = this.outputStream?.getAudioTracks()[0];
+    const camV = this.camStream?.getVideoTracks()[0];
+    const camA = this.camStream?.getAudioTracks()[0];
+    const t = (tr) => (tr ? `${tr.readyState}${tr.muted ? '/muted' : ''}${tr.enabled ? '' : '/off'}` : '—');
+    return {
+      running: this._running,
+      frames: this._frames,
+      videoWH: `${v.videoWidth}x${v.videoHeight}`,
+      videoReady: v.readyState,
+      videoPaused: v.paused,
+      inDom: !!v.isConnected,
+      canvasWH: `${this.canvas.width}x${this.canvas.height}`,
+      camVideo: t(camV),
+      camAudio: t(camA),
+      outVideo: t(outV),
+      outAudio: t(outA),
+      lastErr: this._lastErr,
+    };
   }
 
   stop() {
