@@ -1,9 +1,8 @@
 // ============================================================================
 // InstallCard — the shared bottom-anchored install bar (terminal aesthetic)
 // ============================================================================
-// Used by both InstallPrompt (Android/desktop one-tap) and IOSInstallTutorial
-// (iOS "show me how"). Fixed to the bottom center, honors the safe-area inset,
-// and matches CamBridge's panel/btn styling.
+// Used by InstallPrompt (Android/desktop one-tap). Fixed to the bottom center,
+// honors the safe-area inset, and matches CamBridge's panel/btn styling.
 // ============================================================================
 
 import type { CSSProperties } from 'react';
